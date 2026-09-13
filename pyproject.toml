@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=64", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "options-trader"
+version = "0.1.0"
+description = "PDF-based call option valuation + fractional Kelly sizing + Alpaca paper auto-execution"
+requires-python = ">=3.11"
+dependencies = [
+    "alpaca-py==0.43.2",
+    "pandas",
+    "numpy",
+    "yfinance",
+    "scipy",
+    "matplotlib",
+    "requests",
+    "lxml",
+    "tabulate",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-mock",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]

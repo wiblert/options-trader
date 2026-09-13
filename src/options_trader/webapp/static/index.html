@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forecast Diagnostics — options-trader</title>
+<script src="/static/vendor/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  :root {
+    --bg: #0f1419; --panel: #1a2029; --line: #2a3340; --fg: #e6e9ed;
+    --muted: #8b97a7; --accent: #4ea1ff; --boot: #4ea1ff; --gauss: #f0a830;
+    --realized: #ff5c5c; --up: #2ca02c; --down: #d62728;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+         background: var(--bg); color: var(--fg); }
+  header { padding: 12px 20px; border-bottom: 1px solid var(--line);
+           display: flex; align-items: baseline; gap: 14px; }
+  header h1 { font-size: 17px; margin: 0; font-weight: 600; }
+  header .sub { color: var(--muted); font-size: 13px; }
+  .layout { display: grid; grid-template-columns: 280px 1fr; gap: 0; min-height: calc(100vh - 50px); }
+  .controls { padding: 18px; border-right: 1px solid var(--line); background: var(--panel); }
+  .controls .group { margin-bottom: 20px; }
+  .controls label { display: block; font-size: 12px; color: var(--muted);
+                    text-transform: uppercase; letter-spacing: .04em; margin-bottom: 6px; }
+  .ticker-row { display: flex; gap: 6px; }
+  input[type=text], input[type=number] {
+    background: #0d1116; border: 1px solid var(--line); color: var(--fg);
+    border-radius: 6px; padding: 8px 10px; font-size: 14px; width: 100%; }
+  button { background: var(--accent); color: #04121f; border: none; border-radius: 6px;
+           padding: 9px 12px; font-size: 13px; font-weight: 600; cursor: pointer; }
+  button.secondary { background: #2a3340; color: var(--fg); }
+  button:hover { filter: brightness(1.1); }
+  .seg { display: flex; flex-direction: column; gap: 6px; }
+  .seg label.opt { display: flex; align-items: center; gap: 8px; text-transform: none;
+                   color: var(--fg); font-size: 14px; letter-spacing: 0; margin: 0; cursor: pointer; }
+  .row { display: flex; gap: 10px; }
+  .row > div { flex: 1; }
+  .run { width: 100%; padding: 12px; font-size: 15px; margin-top: 4px; }
+  .main { padding: 16px 20px; display: flex; flex-direction: column; gap: 14px; }
+  #chart { width: 100%; height: 460px; background: var(--panel); border-radius: 8px; }
+  .cards { display: flex; gap: 14px; flex-wrap: wrap; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px;
+          padding: 12px 16px; flex: 1; min-width: 180px; }
+  .card h3 { margin: 0 0 8px; font-size: 12px; color: var(--muted);
+             text-transform: uppercase; letter-spacing: .05em; }
+  .metric { display: flex; justify-content: space-between; font-size: 14px; padding: 2px 0; }
+  .metric .v { font-variant-numeric: tabular-nums; font-weight: 600; }
+  .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+  .future { background: var(--panel); border: 1px dashed var(--line); border-radius: 8px;
+            padding: 18px; color: var(--muted); text-align: center; font-size: 14px; }
+  .status { color: var(--muted); font-size: 13px; min-height: 18px; }
+  .status.err { color: var(--realized); }
+  .pill { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #2a3340; color: var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Forecast Diagnostics</h1>
+  <span class="sub">options-trader · bootstrap forecast vs. normal baseline</span>
+</header>
+
+<div class="layout">
+  <aside class="controls">
+    <div class="group">
+      <label>Ticker</label>
+      <div class="ticker-row">
+        <input type="text" id="ticker" value="META" />
+        <button class="secondary" id="random" title="Random cap-weighted draw">🎲</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <label>Horizon (trading days)</label>
+      <input type="number" id="horizon" value="21" min="2" max="120" />
+    </div>
+
+    <div class="group">
+      <label>Mode</label>
+      <div class="seg">
+        <label class="opt"><input type="radio" name="mode" value="diagnostic" checked /> Diagnostic (hold out &amp; score)</label>
+        <label class="opt"><input type="radio" name="mode" value="live" /> Live (forecast from latest)</label>
+      </div>
+    </div>
+
+    <div class="group">
+      <label>Forecast view</label>
+      <div class="seg">
+        <label class="opt"><input type="radio" name="view" value="spaghetti" checked /> Spaghetti (30 paths)</label>
+        <label class="opt"><input type="radio" name="view" value="pdf" /> Terminal price PDF</label>
+        <label class="opt"><input type="radio" name="view" value="cdf" /> Terminal price CDF</label>
+      </div>
+    </div>
+
+    <div class="group">
+      <label>Overlays</label>
+      <div class="seg">
+        <label class="opt"><input type="checkbox" id="showNormal" checked /> Compare with normal</label>
+        <label class="opt"><input type="checkbox" id="showBands" checked /> p10–p90 band</label>
+      </div>
+    </div>
+
+    <button class="run" id="run">Run forecast</button>
+    <p class="status" id="status"></p>
+  </aside>
+
+  <main class="main">
+    <div id="chart"></div>
+
+    <div class="cards">
+      <div class="card">
+        <h3>Forecast summary</h3>
+        <div id="summary"></div>
+      </div>
+      <div class="card" id="diagCard">
+        <h3>Accuracy diagnosis <span class="pill">diagnostic mode</span></h3>
+        <div id="diagnostics"></div>
+      </div>
+    </div>
+
+    <div class="future">
+      📈 <strong>Options &amp; recommended price</strong> — reserved.
+      A future panel will show the live option chain, market vs. model-implied prices,
+      and the recommended price for this forecast.
+    </div>
+  </main>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const radio = (name) => document.querySelector(`input[name=${name}]:checked`).value;
+
+const COLORS = {
+  boot: "#4ea1ff", gauss: "#f0a830", realized: "#ff5c5c",
+  median: "#ffffff", band: "rgba(78,161,255,0.13)", up: "#2ca02c", down: "#d62728",
+  muted: "#8b97a7",
+};
+const LAYOUT_BASE = {
+  paper_bgcolor: "#1a2029", plot_bgcolor: "#1a2029",
+  font: { color: "#e6e9ed", size: 12 },
+  margin: { l: 55, r: 20, t: 30, b: 40 },
+  showlegend: true,
+  legend: { orientation: "h", y: 1.08, x: 0, bgcolor: "rgba(0,0,0,0)" },
+  hovermode: "closest",
+};
+
+let lastPayload = null;
+
+async function run() {
+  const ticker = $("ticker").value.trim().toUpperCase();
+  if (!ticker) { setStatus("Enter a ticker.", true); return; }
+  setStatus(`Loading ${ticker} …`);
+  $("run").disabled = true;
+  const q = new URLSearchParams({
+    ticker, horizon: $("horizon").value, mode: radio("mode"),
+  });
+  try {
+    const resp = await fetch(`/api/forecast?${q}`);
+    const data = await resp.json();
+    if (!resp.ok || data.error) throw new Error(data.error || resp.statusText);
+    lastPayload = data;
+    render();
+    setStatus(`${data.ticker} · ${data.mode} · spot $${data.spot.toFixed(2)} · source ${data.source}`);
+  } catch (e) {
+    setStatus(e.message, true);
+  } finally {
+    $("run").disabled = false;
+  }
+}
+
+function setStatus(msg, isErr=false) {
+  const s = $("status"); s.textContent = msg; s.className = "status" + (isErr ? " err" : "");
+}
+
+function render() {
+  if (!lastPayload) return;
+  const view = radio("view");
+  if (view === "spaghetti") renderSpaghetti(lastPayload);
+  else renderDistribution(lastPayload, view);
+  renderCards(lastPayload);
+}
+
+// ---- Time-series + spaghetti ----
+function renderSpaghetti(d) {
+  const traces = [];
+  // OHLC history bars (candlestick gives the requested bar view).
+  const h = d.history;
+  traces.push({
+    type: "candlestick", name: "History",
+    x: h.dates, open: h.open, high: h.high, low: h.low, close: h.close,
+    increasing: { line: { color: COLORS.up } }, decreasing: { line: { color: COLORS.down } },
+    showlegend: false,
+  });
+
+  // p10–p90 band (filled).
+  if ($("showBands").checked) {
+    traces.push({ type: "scatter", mode: "lines", x: d.path_x, y: d.bands.p90,
+      line: { width: 0 }, hoverinfo: "skip", showlegend: false });
+    traces.push({ type: "scatter", mode: "lines", x: d.path_x, y: d.bands.p10,
+      line: { width: 0 }, fill: "tonexty", fillcolor: COLORS.band,
+      name: "p10–p90", hoverinfo: "skip" });
+  }
+
+  // Spaghetti paths.
+  d.spaghetti.forEach((path, i) => {
+    traces.push({ type: "scatter", mode: "lines", x: d.path_x, y: path,
+      line: { color: COLORS.boot, width: 1 }, opacity: 0.28,
+      hoverinfo: "skip", showlegend: i === 0, name: "Forecast paths" });
+  });
+
+  // Highlighted median path.
+  traces.push({ type: "scatter", mode: "lines", x: d.path_x, y: d.bands.p50,
+    line: { color: COLORS.median, width: 2.5 }, name: "Median path" });
+
+  // Realized continuation (diagnostic mode).
+  if (d.realized) {
+    traces.push({ type: "scatter", mode: "lines+markers", x: d.realized.dates,
+      y: d.realized.close, line: { color: COLORS.realized, width: 2.5 },
+      marker: { size: 4 }, name: "Realized" });
+  }
+
+  const layout = Object.assign({}, LAYOUT_BASE, {
+    title: { text: `${d.ticker} — forecast spaghetti (${d.horizon}d)`, font: { size: 14 } },
+    xaxis: { gridcolor: "#222a34", rangeslider: { visible: false } },
+    yaxis: { title: "Price ($)", gridcolor: "#222a34" },
+  });
+  Plotly.react("chart", traces, layout, { responsive: true, displayModeBar: false });
+}
+
+// ---- Terminal PDF / CDF (price on Y, like a sideways density at the horizon) ----
+function renderDistribution(d, kind) {
+  const t = d.terminal, grid = t.grid;
+  const traces = [];
+  const xkey = kind; // "pdf" | "cdf"
+  const xlabel = kind === "pdf" ? "Density" : "Cumulative probability";
+
+  traces.push({ type: "scatter", mode: "lines", x: t.bootstrap[xkey], y: grid,
+    line: { color: COLORS.boot, width: 2.5 }, fill: "tozerox",
+    fillcolor: "rgba(78,161,255,0.12)", name: "Bootstrap (empirical)" });
+
+  if ($("showNormal").checked) {
+    traces.push({ type: "scatter", mode: "lines", x: t.gaussian[xkey], y: grid,
+      line: { color: COLORS.gauss, width: 2.5, dash: "dot" }, name: "Normal (Gaussian)" });
+  }
+
+  // Median markers (horizontal lines).
+  const xmax = Math.max(...t.bootstrap[xkey],
+                        ($("showNormal").checked ? Math.max(...t.gaussian[xkey]) : 0));
+  addHLine(traces, t.bootstrap.median, xmax, COLORS.median, "Bootstrap median");
+  if ($("showNormal").checked)
+    addHLine(traces, t.gaussian.median, xmax, COLORS.gauss, "Normal median", "dot");
+
+  // Spot + realized reference lines.
+  addHLine(traces, d.spot, xmax, COLORS.muted, "Spot", "dash");
+  if (d.realized)
+    addHLine(traces, d.realized.terminal, xmax, COLORS.realized, "Realized terminal");
+
+  const layout = Object.assign({}, LAYOUT_BASE, {
+    title: { text: `${d.ticker} — terminal ${kind.toUpperCase()} at ${d.horizon}d`, font: { size: 14 } },
+    xaxis: { title: xlabel, gridcolor: "#222a34" },
+    yaxis: { title: "Terminal price ($)", gridcolor: "#222a34" },
+  });
+  Plotly.react("chart", traces, layout, { responsive: true, displayModeBar: false });
+}
+
+function addHLine(traces, y, xmax, color, name, dash="solid") {
+  traces.push({ type: "scatter", mode: "lines", x: [0, xmax], y: [y, y],
+    line: { color, width: 1.6, dash }, name: `${name} ($${y.toFixed(2)})`,
+    hoverinfo: "name" });
+}
+
+// ---- Cards ----
+function renderCards(d) {
+  const t = d.terminal;
+  const fmt = (x) => `$${x.toFixed(2)}`;
+  $("summary").innerHTML = `
+    <div class="metric"><span><span class="swatch" style="background:${COLORS.boot}"></span>Bootstrap median</span><span class="v">${fmt(t.bootstrap.median)}</span></div>
+    <div class="metric"><span>Bootstrap 5–95%</span><span class="v">${fmt(t.bootstrap.q05)} – ${fmt(t.bootstrap.q95)}</span></div>
+    <div class="metric"><span><span class="swatch" style="background:${COLORS.gauss}"></span>Normal median</span><span class="v">${fmt(t.gaussian.median)}</span></div>
+    <div class="metric"><span>Normal 5–95%</span><span class="v">${fmt(t.gaussian.q05)} – ${fmt(t.gaussian.q95)}</span></div>
+    <div class="metric"><span>Spot (anchor ${d.anchor_date})</span><span class="v">${fmt(d.spot)}</span></div>`;
+
+  const dc = $("diagCard");
+  if (!d.diagnostics) {
+    dc.style.display = "none";
+    return;
+  }
+  dc.style.display = "";
+  const g = d.diagnostics;
+  const pct = (x) => `${(x * 100).toFixed(1)}%`;
+  const ls = (x) => x.toFixed(3);
+  const tail = (p) => (p < 0.05 || p > 0.95) ? ' ⚠️' : '';
+  $("diagnostics").innerHTML = `
+    <div class="metric"><span><span class="swatch" style="background:${COLORS.realized}"></span>Realized terminal</span><span class="v">${fmt(g.realized_terminal)}</span></div>
+    <div class="metric"><span>Bootstrap PIT percentile</span><span class="v">${pct(g.bootstrap.percentile)}${tail(g.bootstrap.percentile)}</span></div>
+    <div class="metric"><span>Bootstrap log score</span><span class="v">${ls(g.bootstrap.log_score)}</span></div>
+    <div class="metric"><span>Normal PIT percentile</span><span class="v">${pct(g.gaussian.percentile)}${tail(g.gaussian.percentile)}</span></div>
+    <div class="metric"><span>Normal log score</span><span class="v">${ls(g.gaussian.log_score)}</span></div>
+    <div class="metric" style="border-top:1px solid var(--line);margin-top:6px;padding-top:6px">
+      <span>Higher log score wins</span>
+      <span class="v">${g.bootstrap.log_score >= g.gaussian.log_score ? "Bootstrap" : "Normal"}</span></div>`;
+}
+
+// ---- Wiring ----
+$("run").addEventListener("click", run);
+$("random").addEventListener("click", async () => {
+  setStatus("Sampling…");
+  try {
+    const r = await fetch("/api/random_ticker");
+    const j = await r.json();
+    if (j.error) throw new Error(j.error);
+    $("ticker").value = j.ticker;
+    run();
+  } catch (e) { setStatus(e.message, true); }
+});
+$("ticker").addEventListener("keydown", (e) => { if (e.key === "Enter") run(); });
+// Re-render (no refetch) when only the view/overlay toggles change.
+document.querySelectorAll("input[name=view], #showNormal, #showBands")
+  .forEach((el) => el.addEventListener("change", render));
+
+run();  // initial load
+</script>
+</body>
+</html>

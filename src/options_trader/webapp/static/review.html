@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Daily Review — options-trader</title>
+<script src="/static/vendor/plotly-2.35.2.min.js" charset="utf-8"></script>
+<style>
+  :root {
+    --bg:#0f1419; --panel:#1a2029; --line:#2a3340; --fg:#e6e9ed; --muted:#8b97a7;
+    --accent:#4ea1ff; --strike:#f0a830; --spot:#8b97a7; --mean:#ffffff;
+    --breakeven:#c77dff; --buy:#2ca02c; --sell:#ff5c5c; --hold:#8b97a7;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font-family:-apple-system,Segoe UI,Roboto,sans-serif; background:var(--bg); color:var(--fg); }
+  header { padding:12px 20px; border-bottom:1px solid var(--line); display:flex; align-items:baseline; gap:14px; }
+  header h1 { font-size:17px; margin:0; font-weight:600; }
+  header .sub { color:var(--muted); font-size:13px; }
+  header a { color:var(--accent); font-size:13px; text-decoration:none; margin-left:auto; }
+  .wrap { padding:16px 20px; display:flex; flex-direction:column; gap:14px; max-width:1100px; margin:0 auto; }
+  .runbar { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:14px 16px;
+            display:flex; gap:12px; align-items:flex-end; flex-wrap:wrap; }
+  .runbar .f { display:flex; flex-direction:column; gap:6px; }
+  .runbar label { font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+  input[type=text] { background:#0d1116; border:1px solid var(--line); color:var(--fg); border-radius:6px;
+                     padding:8px 10px; font-size:14px; min-width:260px; }
+  .chk { display:flex; align-items:center; gap:7px; font-size:13px; color:var(--fg); }
+  button { background:var(--accent); color:#04121f; border:none; border-radius:6px; padding:9px 14px;
+           font-size:13px; font-weight:600; cursor:pointer; }
+  button.secondary { background:#2a3340; color:var(--fg); }
+  button.ghost { background:transparent; color:var(--muted); border:1px solid var(--line); }
+  button:disabled { opacity:.5; cursor:default; }
+  button:hover:not(:disabled) { filter:brightness(1.1); }
+  .status { color:var(--muted); font-size:13px; min-height:18px; }
+  .status.err { color:var(--sell); }
+
+  /* budget meter */
+  .budget { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:12px 16px; }
+  .budget h3 { margin:0 0 10px; font-size:12px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .bgrid { display:flex; gap:18px; flex-wrap:wrap; }
+  .bgrid .b { font-size:13px; color:var(--muted); }
+  .bgrid .b .v { display:block; font-size:18px; color:var(--fg); font-weight:600; font-variant-numeric:tabular-nums; }
+  .bar { height:10px; border-radius:5px; background:#0d1116; margin-top:12px; overflow:hidden; display:flex; }
+  .bar .used { background:var(--accent); } .bar .pending { background:var(--strike); }
+  .bar .free { background:#26303c; flex:1; }
+
+  /* queue card */
+  .queue { background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:16px; }
+  .qhead { display:flex; align-items:center; gap:10px; margin-bottom:6px; }
+  .qhead .step { font-size:13px; color:var(--muted); }
+  .badge { font-size:11px; font-weight:700; padding:3px 9px; border-radius:11px; }
+  .badge.buy { background:rgba(44,160,44,.18); color:var(--buy); }
+  .badge.sell { background:rgba(255,92,92,.18); color:var(--sell); }
+  .badge.hold { background:#2a3340; color:var(--hold); }
+  .badge.rec { background:rgba(78,161,255,.18); color:var(--accent); }
+  .title { font-size:20px; font-weight:600; margin:2px 0 2px; }
+  .verdict { font-size:13px; margin-bottom:10px; }
+  .verdict.ok { color:var(--buy); } .verdict.no { color:var(--sell); }
+  .charts { display:grid; grid-template-columns:1.3fr 1fr; gap:12px; }
+  .chartbox { height:340px; background:#10161d; border-radius:8px; }
+  @media (max-width:820px){ .charts{ grid-template-columns:1fr; } }
+  .metrics { display:flex; gap:12px; flex-wrap:wrap; margin-top:12px; }
+  .mcard { background:#10161d; border:1px solid var(--line); border-radius:8px; padding:10px 14px; flex:1; min-width:220px; }
+  .mcard h4 { margin:0 0 6px; font-size:11px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
+  .metric { display:flex; justify-content:space-between; font-size:13px; padding:2px 0; }
+  .metric .v { font-variant-numeric:tabular-nums; font-weight:600; }
+  .pos { color:var(--buy); } .neg { color:var(--sell); }
+  .actions { display:flex; gap:10px; margin-top:16px; align-items:center; }
+  .outcome { font-size:14px; padding:8px 12px; border-radius:6px; }
+  .outcome.SUBMITTED { background:rgba(44,160,44,.16); color:var(--buy); }
+  .outcome.DRY_RUN { background:rgba(78,161,255,.16); color:var(--accent); }
+  .outcome.SKIPPED, .outcome.REJECTED { background:rgba(255,92,92,.16); color:var(--sell); }
+  .legend { font-size:11px; color:var(--muted); margin-top:6px; }
+  .swatch { display:inline-block; width:10px; height:3px; vertical-align:middle; margin:0 4px 0 10px; }
+  .done { text-align:center; padding:40px; color:var(--muted); }
+  .pill { font-size:11px; padding:2px 7px; border-radius:10px; background:#2a3340; color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>Daily Review</h1>
+  <span class="sub">options-trader · review every recommendation, approve to execute</span>
+  <a href="/">← forecast diagnostics</a>
+</header>
+
+<div class="wrap">
+  <div class="runbar">
+    <div class="f">
+      <label>Tickers</label>
+      <input type="text" id="tickers" value="META" placeholder="META, AAPL, NVDA" />
+    </div>
+    <label class="chk"><input type="checkbox" id="useSample" /> Use daily 40-name sample</label>
+    <label class="chk"><input type="checkbox" id="dryRun" checked /> Dry-run (simulate orders)</label>
+    <button id="run">Run review</button>
+    <span class="status" id="status"></span>
+  </div>
+
+  <div class="budget" id="budgetPanel" style="display:none">
+    <h3>Kelly budget</h3>
+    <div class="bgrid" id="budgetGrid"></div>
+    <div class="bar" id="budgetBar"></div>
+  </div>
+
+  <div class="queue" id="queue" style="display:none"></div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const LAYOUT = {
+  paper_bgcolor:"#10161d", plot_bgcolor:"#10161d", font:{color:"#e6e9ed", size:11},
+  margin:{l:50,r:14,t:30,b:36}, showlegend:false, hovermode:"closest",
+};
+const C = { accent:"#4ea1ff", strike:"#f0a830", spot:"#8b97a7", mean:"#ffffff",
+            breakeven:"#c77dff", band:"rgba(78,161,255,.5)" };
+
+let session = null;     // server payload (has session_id, budget, sells[], buys[])
+let queue = [];         // [{...item, _state}]
+let idx = 0;
+
+const money = (x) => (x==null) ? "—" : "$"+Number(x).toLocaleString(undefined,{maximumFractionDigits:0});
+const dol2  = (x) => (x==null) ? "—" : "$"+Number(x).toFixed(2);
+const pct   = (x) => (x==null) ? "—" : (x*100).toFixed(1)+"%";
+const signed= (x) => (x==null) ? "—" : (x>=0?"+":"")+x.toFixed(2);
+
+function setStatus(msg, err=false){ const s=$("status"); s.textContent=msg; s.className="status"+(err?" err":""); }
+
+async function run(){
+  $("run").disabled = true;
+  setStatus("Computing the run — this can take a moment per ticker…");
+  try{
+    const body = {
+      tickers: $("tickers").value, use_sample: $("useSample").checked,
+      dry_run: $("dryRun").checked,
+    };
+    const r = await fetch("/api/review/run", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)});
+    const data = await r.json();
+    if(!r.ok || data.error) throw new Error(data.error || r.statusText);
+    session = data;
+    queue = [...data.sells, ...data.buys].map(it => ({...it, _state:"pending", _outcome:null}));
+    idx = 0;
+    const c = data.counts;
+    setStatus(`${data.tickers.length} tickers · ${c.positions} positions (${c.sell_recommended} to sell) · ${c.buy_candidates} buy candidates (${c.buy_recommended} recommended)`
+              + (data.dry_run ? " · DRY-RUN" : " · LIVE PAPER"));
+    renderBudget(data.budget);
+    $("budgetPanel").style.display = ""; $("queue").style.display = "";
+    renderCurrent();
+  }catch(e){ setStatus(e.message, true); }
+  finally{ $("run").disabled = false; }
+}
+
+function renderBudget(b){
+  $("budgetGrid").innerHTML = `
+    <div class="b">Bankroll<span class="v">${money(b.bankroll)}</span></div>
+    <div class="b">Gross budget (${pct(b.gross_fraction)})<span class="v">${money(b.gross_budget)}</span></div>
+    <div class="b">Existing premium<span class="v">${money(b.current_premium)}</span></div>
+    <div class="b">Deployed this session<span class="v">${money(b.deployed_so_far)}</span></div>
+    <div class="b">Remaining budget<span class="v">${money(b.remaining)}</span></div>`;
+  const g = b.gross_budget || 1;
+  const used = 100*Math.min(1, b.current_premium/g);
+  const pend = 100*Math.min(1-used/100, b.deployed_so_far/g);
+  $("budgetBar").innerHTML =
+    `<div class="used" style="width:${used}%"></div><div class="pending" style="width:${pend}%"></div><div class="free"></div>`;
+}
+
+function renderCurrent(){
+  const q = $("queue");
+  if(idx >= queue.length){
+    q.innerHTML = `<div class="done">✓ Review complete — ${queue.length} items reviewed.
+      <br><br><button class="secondary" onclick="location.reload()">Start a new review</button></div>`;
+    return;
+  }
+  const it = queue[idx];
+  const nSell = session.sells.length;
+  const phase = it.kind === "sell" ? `Sell review ${idx+1} of ${nSell}` : `Buy review ${idx+1-nSell} of ${session.buys.length}`;
+  q.innerHTML = `
+    <div class="qhead">
+      <span class="step">${phase}</span>
+      ${badgeFor(it)}
+      ${it.resting ? '<span class="pill">resting sell exists</span>' : ''}
+    </div>
+    <div class="title">${it.kind==="sell" ? it.symbol : (it.underlying+" "+it.option_type.toUpperCase()+" $"+it.strike+" · "+it.expiry)}</div>
+    ${verdictFor(it)}
+    <div class="charts"><div class="chartbox" id="chartHist"></div><div class="chartbox" id="chartDist"></div></div>
+    <div class="legend">
+      <span class="swatch" style="background:${C.strike}"></span>strike
+      <span class="swatch" style="background:${C.spot}"></span>spot (existing price)
+      <span class="swatch" style="background:${C.mean}"></span>E[S<sub>T</sub>] forecast mean
+      <span class="swatch" style="background:${C.breakeven}"></span>breakeven
+    </div>
+    <div class="metrics" id="metrics">${metricsFor(it)}</div>
+    <div class="actions" id="actions"></div>`;
+  drawCharts(it);
+  renderActions(it);
+}
+
+function badgeFor(it){
+  if(it.kind==="sell")
+    return it.recommended ? '<span class="badge sell">SELL recommended</span>' : '<span class="badge hold">HOLD</span>';
+  return it.allocated ? '<span class="badge buy">BUY</span><span class="badge rec">recommended to fund</span>'
+                      : '<span class="badge buy">BUY</span>';
+}
+function verdictFor(it){
+  if(it.kind==="sell")
+    return `<div class="verdict ${it.recommended?'no':''}">${it.reason||""}</div>`;
+  return it.allocated
+    ? `<div class="verdict ok">✓ Recommended to fund within the Kelly budget</div>`
+    : `<div class="verdict no">✗ Not funded by the optimiser — ${it.alloc_reason||"capped"} (you may still override)</div>`;
+}
+
+function metricsFor(it){
+  if(it.kind==="sell"){
+    const pl = it.unrealized_pl;
+    return `
+      <div class="mcard"><h4>Decision</h4>
+        ${row("Action", it.action)}
+        ${row("Bid (sell into)", dol2(it.bid))}
+        ${row("Our fair value", dol2(it.fair_value))}
+        ${row("Gap (bid vs fair)", it.gap_pct==null?"—":(it.gap_pct>=0?"+":"")+(it.gap_pct*100).toFixed(0)+"%")}
+      </div>
+      <div class="mcard"><h4>Position</h4>
+        ${row("Contracts held", it.qty)}
+        ${row("Avg entry", dol2(it.avg_entry_price))}
+        ${row("Unrealized P&L", money(pl), pl==null?"":(pl>=0?"pos":"neg"))}
+        ${row("Spot / E[S_T]", dol2(it.spot)+" / "+dol2(it.chart? it.chart.forecast_mean : null))}
+      </div>`;
+  }
+  const s = it.sizing;
+  return `
+    <div class="mcard"><h4>Edge (per share)</h4>
+      ${row("Ask (you pay)", dol2(it.ask))}
+      ${row("Fair value / EV", dol2(it.fair_value))}
+      ${row("Edge", signed(it.edge_buy)+" ("+pct(it.edge_pct_buy)+")", (it.edge_buy||0)>=0?"pos":"neg")}
+      ${row("P(in the money)", pct(it.prob_itm))}
+      ${row("Breakeven", dol2(it.breakeven))}
+      ${row("Drift share of edge", it.drift_share==null?"—":(it.drift_share*100).toFixed(0)+"%")}
+    </div>
+    <div class="mcard"><h4>Kelly sizing</h4>
+      ${row("Contracts", s.n_contracts)}
+      ${row("Cost", money(s.cost))}
+      ${row("Applied fraction", pct(s.applied_fraction)+(s.capped?" (capped)":""))}
+      ${row("Full Kelly f*", s.full_kelly_fraction.toFixed(3))}
+      ${row("Spot / E[S_T]", dol2(it.spot)+" / "+dol2(it.forecast_mean))}
+    </div>`;
+}
+function row(k,v,cls=""){ return `<div class="metric"><span>${k}</span><span class="v ${cls}">${v}</span></div>`; }
+
+function renderActions(it){
+  const a = $("actions");
+  if(it._state === "done"){
+    const o = it._outcome;
+    a.innerHTML = `<span class="outcome ${o.status}">${o.status}${o.reason?(" · "+o.reason):""}${o.order_id?(" · "+o.order_id):""}</span>
+      <button id="next">Next →</button>`;
+    $("next").onclick = advance;
+    return;
+  }
+  const verb = it.kind==="sell" ? "Approve sell — execute" : "Approve buy — execute";
+  a.innerHTML = `<button id="approve">${verb}</button><button class="ghost" id="skip">Skip</button>`;
+  $("approve").onclick = () => approve(it, false);
+  $("skip").onclick = advance;
+}
+
+async function approve(it, override){
+  const verb = it.kind==="sell" ? `SELL ${it.qty}x ${it.symbol} at bid ${dol2(it.bid)}`
+                                : `BUY ${it.sizing.n_contracts}x ${it.symbol} at ask ${dol2(it.ask)} (${money(it.sizing.cost)})`;
+  if(!override && !confirm(`${session.dry_run?"[DRY-RUN] ":""}${verb}?`)) return;
+  $("approve") && ($("approve").disabled = true);
+  try{
+    const r = await fetch("/api/review/execute", {method:"POST", headers:{"Content-Type":"application/json"},
+      body: JSON.stringify({session_id: session.session_id, item_id: it.item_id, override})});
+    const data = await r.json();
+    if(data.error) throw new Error(data.error);
+    if(data.budget) renderBudget(data.budget);
+    if(data.blocked){
+      if(confirm(data.message + "\n\nOverride the Kelly budget and buy anyway?")) return approve(it, true);
+      $("approve") && ($("approve").disabled = false);
+      return;
+    }
+    it._state = "done"; it._outcome = data.order;
+    renderActions(it);
+  }catch(e){ setStatus(e.message, true); $("approve") && ($("approve").disabled=false); }
+}
+
+function advance(){ idx++; renderCurrent(); }
+
+// ---- charts ----
+function drawCharts(it){
+  const c = it.chart;
+  if(!c){ $("chartHist").innerHTML = '<div class="done">no forecast available</div>'; $("chartDist").innerHTML=""; return; }
+  // History + forecast band
+  const h = c.history;
+  const xEnd = c.horizon_date || h.dates[h.dates.length-1];
+  const hist = [{type:"scatter", mode:"lines", x:h.dates, y:h.close, line:{color:C.accent, width:1.8}, name:"close"}];
+  hline(hist, h.dates[0], xEnd, c.strike, C.strike, "strike", "dash");
+  if(c.breakeven!=null) hline(hist, h.dates[0], xEnd, c.breakeven, C.breakeven, "breakeven", "dot");
+  hist.push({type:"scatter", mode:"markers", x:[h.dates[h.dates.length-1]], y:[c.spot],
+             marker:{color:C.spot, size:8}, name:"spot"});
+  // forecast band q05..q95 at the horizon with mean + median markers
+  const t = c.terminal;
+  hist.push({type:"scatter", mode:"lines", x:[xEnd,xEnd], y:[t.q05,t.q95], line:{color:C.band, width:6}, name:"forecast 5–95%"});
+  hist.push({type:"scatter", mode:"markers", x:[xEnd,xEnd], y:[t.q50, c.forecast_mean],
+             marker:{color:[C.accent,C.mean], size:[7,9], symbol:["circle","diamond"]}, name:"median / mean"});
+  Plotly.react("chartHist", hist, Object.assign({}, LAYOUT, {
+    title:{text:"History + forecast", font:{size:13}},
+    xaxis:{gridcolor:"#1d2730"}, yaxis:{title:"Price ($)", gridcolor:"#1d2730"}}),
+    {responsive:true, displayModeBar:false});
+
+  // Terminal forecast distribution (price on x, density on y) with reference lines
+  const ymax = Math.max(...t.pdf);
+  const dist = [{type:"scatter", mode:"lines", x:t.grid, y:t.pdf, fill:"tozeroy",
+                 fillcolor:"rgba(78,161,255,.16)", line:{color:C.accent, width:2}, name:"forecast"}];
+  vline(dist, c.strike, ymax, C.strike, "strike", "dash");
+  vline(dist, c.spot, ymax, C.spot, "spot", "dash");
+  if(c.breakeven!=null) vline(dist, c.breakeven, ymax, C.breakeven, "breakeven", "dot");
+  vline(dist, c.forecast_mean, ymax, C.mean, "E[S_T]", "solid");
+  Plotly.react("chartDist", dist, Object.assign({}, LAYOUT, {
+    title:{text:"Forecast distribution at expiry", font:{size:13}},
+    xaxis:{title:"Terminal price ($)", gridcolor:"#1d2730"}, yaxis:{title:"Density", gridcolor:"#1d2730"}}),
+    {responsive:true, displayModeBar:false});
+}
+function hline(tr, x0, x1, y, color, name, dash){ if(y==null) return;
+  tr.push({type:"scatter", mode:"lines", x:[x0,x1], y:[y,y], line:{color, width:1.6, dash}, name, hoverinfo:"name"}); }
+function vline(tr, x, ymax, color, name, dash){ if(x==null) return;
+  tr.push({type:"scatter", mode:"lines", x:[x,x], y:[0,ymax], line:{color, width:1.6, dash}, name, hoverinfo:"name"}); }
+
+// ---- wiring ----
+$("run").addEventListener("click", run);
+$("useSample").addEventListener("change", (e)=>{ $("tickers").disabled = e.target.checked; });
+</script>
+</body>
+</html>

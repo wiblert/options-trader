@@ -1,0 +1,9 @@
+ticker,date,event_type,timing,note
+*,2025-06-18,macro_fomc,amc,FOMC rate decision
+*,2025-07-30,macro_fomc,amc,FOMC rate decision
+*,2025-09-17,macro_fomc,amc,FOMC rate decision
+*,2025-11-07,macro_fomc,amc,FOMC rate decision
+*,2025-12-17,macro_fomc,amc,FOMC rate decision
+*,2026-01-28,macro_fomc,amc,FOMC rate decision
+*,2026-03-18,macro_fomc,amc,FOMC rate decision
+*,2026-05-06,macro_fomc,amc,FOMC rate decision

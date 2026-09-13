@@ -1,0 +1,8 @@
+alpaca-py==0.43.2
+pandas
+numpy
+yfinance
+scipy
+requests
+lxml
+tabulate
