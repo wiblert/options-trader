@@ -1,10 +1,10 @@
 # Status
 
-_As of 2026-09-13 (end of Session 19). Update this at every session end._
+_As of 2026-09-13 (end of Session 20). Update this at every session end._
 
 ## Build
-- Clean. **453 tests passing** (`python -m pytest -q`). Tests are synthetic / no-network; also
-  end-to-end live-verified against real Alpaca/yfinance data this session (see Session 19).
+- Clean. **469 tests passing** (`python -m pytest -q`). Tests are synthetic / no-network; also
+  end-to-end live-verified against real Alpaca/yfinance data (Sessions 19–20).
 - Install: `pip install -e .`; venv at `./venv`. No new deps pending.
 - Git remote: `https://github.com/wiblert/options-trader` (public), pushed Session 19.
 
@@ -47,7 +47,8 @@ _As of 2026-09-13 (end of Session 19). Update this at every session end._
 ## Recommended next step
 _Production default is now the **50/50 blend** (event-bootstrap ⊕ event-OIB), switched S18 per user
 direction. The Architecture / tech-debt cleanup section in `docs/todo.md` is now fully resolved
-(Session 19). The highest-priority follow-ups, in order:_
+(Session 19), and the Universe section's dual-class dedup + Alpaca symbol-format items are resolved
+(Session 20). The highest-priority follow-ups, in order:_
 
 **A. Validate the blend default properly** (it shipped on a single-window edge). Gate it on a
 **held-out 2nd window** + build the **vol/beta router** (`docs/todo.md` ensemble item) — item 1 showed
@@ -90,6 +91,23 @@ forecaster** (Student-t / jump diffusion) remains the highest-value open forecas
 Full backlog: `docs/todo.md`.
 
 ## Last worked on
+**Session 20 (2026-09-13) — dual-class dedup + Alpaca symbol-format mapping (Universe to-dos).**
+Researched, then implemented, both open Universe items. Confirmed via code + the real snapshot data
+that the todo bundled two UNRELATED problems: (A) GOOGL/GOOG, FOX/FOXA, NWS/NWSA are separate snapshot
+rows for one issuer each — `sample_tickers` could draw both into one watchlist, double-counting that
+company's exposure; (B) `BRK-B` is a pure string-format bug (Alpaca wants `BRK.B`) with no duplicate
+row to dedup against at all. Fixed A: `universe/sampler.py::DUAL_CLASS_ISSUERS` (3 groups) +
+`_dedup_dual_class` keeps the higher-market-cap ticker per group — self-adjusting, not a hardcoded
+"primary" side (verified against real data: FOXA and NWS are each the higher-cap/kept ticker, the
+opposite of my first draft's assumption for one of the two). Fixed B: new
+`data/symbol_format.py::to_alpaca_symbol` (static `BRK-B`/`BF-B` → dot table) applied only at the
+Alpaca request boundary in `history.py`/`options_chain.py`; yfinance still gets the dash ticker;
+`OptionContract.underlying`/`StockReturnTS.ticker` stay stamped with the caller's canonical ticker
+(not Alpaca's dot-format echo) so downstream grouping stays consistent. +16 tests → **469 pass.**
+Live-verified against real Alpaca data: `get_history("BRK-B")`, `get_option_chain("BRK-B")`, and a full
+`run_daily --tickers BRK-B,AAPL` dry-run all succeed — this ticker has errored on every live run since
+Session 7. See `docs/todo.md` Universe section for full detail.
+
 **Session 19 (2026-09-13) — GitHub remote + full architecture/tech-debt cleanup.**
 Pushed the project to `https://github.com/wiblert/options-trader` (public repo, initial commit +
 description). Then worked through the entire S18 "Architecture / tech-debt cleanup" section in

@@ -22,6 +22,13 @@ Pipeline: **history → return distribution(s) → forecaster → price distribu
 **`history.py`** — `get_history(ticker, start=None, end=None) -> StockReturnTS`. Alpaca primary
 (`Adjustment.ALL`, split/div-adjusted), yfinance fallback. 3-year default lookback. Typed errors:
 `CredentialsError` (propagates, never silent-demotes) vs `DataUnavailableError`. 30s timeouts.
+Alpaca requests translate the ticker via `symbol_format.to_alpaca_symbol` (dash→dot class tickers,
+e.g. `BRK-B`→`BRK.B`); the yfinance fallback and the returned `StockReturnTS.ticker` keep the
+caller's original (dash) ticker.
+
+**`symbol_format.py`** — `to_alpaca_symbol(ticker)`: small static dash→dot table (`BRK-B`, `BF-B`)
+applied ONLY at Alpaca request boundaries (`history.py`, `options_chain.py`) — never upstream, since
+yfinance/the universe snapshot expect dash format (S20).
 
 **`stock_return_ts.py`** — `StockReturnTS` dataclass: `ticker`, `dates` (datetime64[ns], US/Eastern
 tz-naive midnight, sorted ascending), `open/high/low/close/volume` (parallel float64),
@@ -196,7 +203,9 @@ across forecasters.
 **`snapshot.py`** — fetches S&P 500 (Wikipedia, browser UA) + caps (yfinance `fast_info`), FREEZES
 to a dated CSV in `universe/snapshots/` (committed = source of truth; refresh deliberate).
 **`sampler.py`** — `sample_tickers(n, seed, power=1.0, exclude=())` cap-weighted, without
-replacement, seeded; independent of global RNG.
+replacement, seeded; independent of global RNG. `DUAL_CLASS_ISSUERS` + `_dedup_dual_class` (S20)
+collapse each dual-class group (GOOGL/GOOG, FOX/FOXA, NWS/NWSA) to its higher-market-cap ticker
+before sampling, so one issuer can't be drawn twice into a watchlist; mirrored in `sampling_weights`.
 
 ---
 
@@ -209,6 +218,7 @@ replacement, seeded; independent of global RNG.
 ## File map (key modules)
 ```
 data/history.py, data/stock_return_ts.py, data/options_chain.py, data/spot_anchor.py, data/occ.py  # occ.py: OCC option-symbol parser
+data/symbol_format.py  # to_alpaca_symbol: dash->dot translation for class tickers (BRK-B), Alpaca call sites only
 data/events/{event,source,yfinance_source,fomc_source,manual_calendar,composite,calendar}.py
 data/options_history.py  # historical EOD option bars + list_contracts (expired discovery, status=inactive); provider Protocol, Alpaca→Databento
 backtest/{option_implied_beta_backtest,option_implied_backtest,blend_backtest}.py  # as-of PDFs + rolling backtests (OIB / own-options / 50-50 blend)

@@ -229,10 +229,26 @@ the S17/S18 builds.
   (3) keep a liquidity floor so we don't sample untradeable names. Implement as a new
   `sample_tickers` weighting mode + a backtest comparing watchlists. Ties to S17 own-options quantile
   finding + the OIB vol/beta router.
-- [ ] Dedup dual-class issuers (GOOGL/GOOG) in the snapshot or sampler.
-- [ ] **Symbol-format mapping for Alpaca** — `BRK-B` is rejected by Alpaca (wants `BRK.B`, dot not dash);
-  fails both `get_history` and the options chain. Map universe symbols → Alpaca format (dash→dot for
-  dual-class) before the data calls. (Surfaced in the Session 7 live run.)
+- [x] **Dedup dual-class issuers (GOOGL/GOOG) — S20.** Two distinct problems, confirmed by reading
+  `universe/snapshot.py`/`sampler.py`/`data/history.py`/`data/options_chain.py`: (A) GOOGL/GOOG,
+  FOX/FOXA, NWS/NWSA are separate snapshot ROWS for the same issuer — `sample_tickers` could draw both
+  into one watchlist, silently doubling that company's effective exposure past the per-name cap;
+  (B) `BRK-B` is a SEPARATE pure string-format bug (one row, one company — no `BRK-A` row exists to
+  dedup against), unrelated to A. Fixed A: `universe/sampler.py::DUAL_CLASS_ISSUERS` (3 known groups)
+  + `_dedup_dual_class` keeps the higher-market-cap ticker per group (self-adjusting if cap ordering
+  flips, not a hardcoded "primary" side — confirmed against the real snapshot: FOXA and NWS are each
+  the kept ticker despite my first draft assuming the other side). Wired into both `sample_tickers`
+  and the `sampling_weights` audit helper.
+- [x] **Symbol-format mapping for Alpaca — S20.** Problem B above: `BRK-B` (yfinance/snapshot dash
+  format) is rejected by Alpaca (wants `BRK.B`). Added `data/symbol_format.py::to_alpaca_symbol`
+  (small static dash→dot table: `BRK-B`, `BF-B`) applied ONLY at the Alpaca request boundary in
+  `history.py` (`_from_alpaca`, `get_latest_price`) and `options_chain.py` (`_fetch_contracts`,
+  `_fetch_snapshots`) — the yfinance fallback still gets the untranslated dash ticker, and
+  `OptionContract.underlying`/`StockReturnTS.ticker` are stamped with the CALLER's canonical ticker,
+  not Alpaca's own dot-format response, so downstream grouping (portfolio caps, held-type guards)
+  stays keyed consistently. Live-verified: `get_history("BRK-B")` and `get_option_chain("BRK-B")` both
+  succeed against real Alpaca data (previously errored on every live run since Session 7); full
+  `run_daily --tickers BRK-B,AAPL` dry-run plans BRK-B with 0 errors.
 - [x] **ORLY/empty-chain handling — root-caused + fixed (S10 cont.5).** Was a DTE-window miss, not a
   thin chain: `_select_expiry`'s `[target−10, target+14]` window could fall between monthly expirations,
   so monthly-only names (most mid-caps) returned "No tradable contracts." Widened the upper bound to

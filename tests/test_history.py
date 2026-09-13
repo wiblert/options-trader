@@ -124,3 +124,86 @@ def test_yfinance_also_fails_raises_data_unavailable(monkeypatch):
         with patch.object(history, "_from_yfinance", side_effect=TimeoutError("also down")):
             with pytest.raises(DataUnavailableError, match="Both sources failed"):
                 get_history("META", start=date(2025, 1, 1), end=date(2025, 12, 31))
+
+
+# ---------- Alpaca symbol-format translation (dash-class tickers, e.g. BRK-B) ----------
+# These exercise _from_alpaca / get_latest_price directly (rather than mocking them
+# away) so the internal to_alpaca_symbol() call is actually on the request path.
+
+def test_from_alpaca_translates_dash_class_ticker(monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake")
+    captured = {}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_stock_bars(self, req):
+            captured["symbol"] = req.symbol_or_symbols
+            return MagicMock(df=pd.DataFrame())
+
+    monkeypatch.setattr(history, "StockHistoricalDataClient", _FakeClient)
+    history._from_alpaca("BRK-B", date(2025, 1, 1), date(2025, 12, 31))
+    assert captured["symbol"] == "BRK.B"
+
+
+def test_from_alpaca_leaves_normal_ticker_unchanged(monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake")
+    captured = {}
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_stock_bars(self, req):
+            captured["symbol"] = req.symbol_or_symbols
+            return MagicMock(df=pd.DataFrame())
+
+    monkeypatch.setattr(history, "StockHistoricalDataClient", _FakeClient)
+    history._from_alpaca("AAPL", date(2025, 1, 1), date(2025, 12, 31))
+    assert captured["symbol"] == "AAPL"
+
+
+def test_from_alpaca_filters_response_by_translated_symbol(monkeypatch):
+    """The response-symbol filter must match the symbol actually requested from
+    Alpaca (the translated one), not the caller's canonical dash-format ticker."""
+    monkeypatch.setenv("ALPACA_API_KEY", "fake")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake")
+    bars = _fake_bars(5).reset_index()
+    bars["timestamp"] = pd.to_datetime(bars["date"]).dt.tz_localize("UTC")
+    bars["symbol"] = "BRK.B"  # what Alpaca actually reports back
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_stock_bars(self, req):
+            return MagicMock(df=bars.set_index(["symbol", "timestamp"]))
+
+    monkeypatch.setattr(history, "StockHistoricalDataClient", _FakeClient)
+    out = history._from_alpaca("BRK-B", date(2025, 1, 1), date(2025, 12, 31))
+    assert len(out) == 5
+
+
+def test_get_latest_price_translates_dash_class_ticker(monkeypatch):
+    monkeypatch.setenv("ALPACA_API_KEY", "fake")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake")
+    captured = {}
+
+    class _FakeTrade:
+        price = "123.45"
+
+    class _FakeClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_stock_latest_trade(self, req):
+            captured["symbol"] = req.symbol_or_symbols
+            return {req.symbol_or_symbols: _FakeTrade()}
+
+    monkeypatch.setattr(history, "StockHistoricalDataClient", _FakeClient)
+    price = history.get_latest_price("BRK-B")
+    assert captured["symbol"] == "BRK.B"
+    assert price == 123.45

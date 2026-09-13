@@ -56,7 +56,7 @@ def test_to_option_type_from_string():
 def test_build_merges_quote_and_maps_fields():
     raw = [_raw_contract("META260116C00500000", 500.0, date(2026, 1, 16), oi=42)]
     snaps = {"META260116C00500000": _snapshot("META260116C00500000", bid=12.0, ask=12.5, iv=0.4)}
-    out = _build_contracts(raw, snaps, include_untradable=False)
+    out = _build_contracts(raw, snaps, include_untradable=False, underlying="META")
     assert len(out) == 1
     c = out[0]
     assert isinstance(c, OptionContract)
@@ -72,14 +72,14 @@ def test_build_merges_quote_and_maps_fields():
 
 def test_build_contract_without_snapshot_has_no_quote():
     raw = [_raw_contract("X", 500.0, date(2026, 1, 16))]
-    out = _build_contracts(raw, {}, include_untradable=False)
+    out = _build_contracts(raw, {}, include_untradable=False, underlying="META")
     assert out[0].bid is None and out[0].ask is None and out[0].implied_vol is None
 
 
 def test_build_handles_snapshot_missing_latest_quote():
     raw = [_raw_contract("X", 500.0, date(2026, 1, 16))]
     snap = SimpleNamespace(symbol="X", latest_quote=None, implied_volatility=0.5)
-    out = _build_contracts(raw, {"X": snap}, include_untradable=False)
+    out = _build_contracts(raw, {"X": snap}, include_untradable=False, underlying="META")
     assert out[0].bid is None and out[0].ask is None
     assert out[0].implied_vol == 0.5  # IV still captured
 
@@ -89,7 +89,7 @@ def test_build_filters_untradable_by_default():
         _raw_contract("OK", 500.0, date(2026, 1, 16), tradable=True),
         _raw_contract("NO", 510.0, date(2026, 1, 16), tradable=False),
     ]
-    out = _build_contracts(raw, {}, include_untradable=False)
+    out = _build_contracts(raw, {}, include_untradable=False, underlying="META")
     assert [c.symbol for c in out] == ["OK"]
 
 
@@ -98,7 +98,7 @@ def test_build_include_untradable_keeps_all():
         _raw_contract("OK", 500.0, date(2026, 1, 16), tradable=True),
         _raw_contract("NO", 510.0, date(2026, 1, 16), tradable=False),
     ]
-    out = _build_contracts(raw, {}, include_untradable=True)
+    out = _build_contracts(raw, {}, include_untradable=True, underlying="META")
     assert len(out) == 2
 
 
@@ -108,13 +108,13 @@ def test_build_sorts_by_expiry_then_strike_then_type():
         _raw_contract("a", 500.0, date(2026, 1, 16), ContractType.CALL),
         _raw_contract("b", 510.0, date(2026, 1, 16), ContractType.CALL),
     ]
-    out = _build_contracts(raw, {}, include_untradable=False)
+    out = _build_contracts(raw, {}, include_untradable=False, underlying="META")
     assert [c.symbol for c in out] == ["a", "b", "c"]
 
 
 def test_build_none_open_interest():
     raw = [_raw_contract("X", 500.0, date(2026, 1, 16), oi=None)]
-    out = _build_contracts(raw, {}, include_untradable=False)
+    out = _build_contracts(raw, {}, include_untradable=False, underlying="META")
     assert out[0].open_interest is None
 
 
@@ -168,3 +168,70 @@ def test_credentials_error_in_contracts_propagates():
 def test_invalid_feed_raises():
     with pytest.raises(OptionsChainError, match="feed must be"):
         get_option_chain("META", feed="bogus")
+
+
+# ---------- Alpaca symbol-format translation (dash-class tickers, e.g. BRK-B) ----------
+
+def test_build_contracts_stamps_canonical_underlying_not_alpacas():
+    """Alpaca reports its OWN dot-format underlying_symbol on each contract; the
+    caller-supplied canonical (dash-format) ticker must win, so downstream code
+    (portfolio grouping, held-type guards) stays keyed consistently."""
+    raw = [SimpleNamespace(
+        symbol="BRKB260116C00500000", underlying_symbol="BRK.B",
+        strike_price="500.0", expiration_date=date(2026, 1, 16),
+        type=ContractType.CALL, tradable=True, open_interest="10",
+    )]
+    out = _build_contracts(raw, {}, include_untradable=False, underlying="BRK-B")
+    assert out[0].underlying == "BRK-B"
+
+
+def test_fetch_contracts_translates_dash_class_ticker(monkeypatch):
+    from options_trader.data import options_chain as oc_mod
+
+    captured = {}
+
+    class _FakeTradingClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_option_contracts(self, req):
+            captured["underlying_symbols"] = req.underlying_symbols
+            return SimpleNamespace(option_contracts=[], next_page_token=None)
+
+    monkeypatch.setenv("ALPACA_API_KEY", "fake")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake")
+    monkeypatch.setattr(oc_mod, "TradingClient", _FakeTradingClient)
+    oc_mod._fetch_contracts("BRK-B", None, None, None, None, None)
+    assert captured["underlying_symbols"] == ["BRK.B"]
+
+
+def test_fetch_snapshots_translates_dash_class_ticker(monkeypatch):
+    from alpaca.data.enums import OptionsFeed
+
+    from options_trader.data import options_chain as oc_mod
+
+    captured = {}
+
+    class _FakeOptionClient:
+        def __init__(self, *a, **kw):
+            pass
+
+        def get_option_chain(self, req):
+            captured["underlying_symbol"] = req.underlying_symbol
+            return {}
+
+    monkeypatch.setenv("ALPACA_API_KEY", "fake")
+    monkeypatch.setenv("ALPACA_SECRET_KEY", "fake")
+    monkeypatch.setattr(oc_mod, "OptionHistoricalDataClient", _FakeOptionClient)
+    oc_mod._fetch_snapshots("BRK-B", None, None, None, None, None, OptionsFeed.INDICATIVE)
+    assert captured["underlying_symbol"] == "BRK.B"
+
+
+def test_get_option_chain_end_to_end_stamps_canonical_underlying():
+    """Full orchestration: even for a dash-class ticker, the returned contracts
+    carry the canonical ticker the caller asked with."""
+    raw = [_raw_contract("BRKB260116C00500000", 500.0, date(2026, 1, 16))]
+    with patch.object(options_chain, "_fetch_contracts", return_value=raw), \
+         patch.object(options_chain, "_fetch_snapshots", return_value={}):
+        out = get_option_chain("BRK-B")
+    assert out[0].underlying == "BRK-B"

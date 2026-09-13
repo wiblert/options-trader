@@ -8,6 +8,7 @@ The standardized test draws its test tickers here. Sampling is:
       concentration. The standardized test uses power=1.0 for stability.
     * Seeded — same (snapshot, n, seed, power, min_market_cap, exclude) →
       identical draw, every time. This is what makes the test "standardized".
+    * Dual-class deduped — see DUAL_CLASS_ISSUERS below.
 
 Determinism note: numpy's Generator.choice(replace=False, p=...) performs weighted
 sampling without replacement deterministically for a fixed seed. We never call
@@ -28,6 +29,35 @@ from options_trader.universe.snapshot import load_snapshot
 
 
 logger = logging.getLogger(__name__)
+
+
+# Known dual-class issuers: each frozenset is ONE company represented by more
+# than one ticker in the S&P 500 snapshot (e.g. GOOGL/GOOG are both Alphabet).
+# Sampling treats every snapshot row as an independent issuer, so without this
+# both classes can be drawn into the SAME watchlist — silently doubling that
+# company's effective exposure past the per-name cap. `_dedup_dual_class` keeps
+# only the higher-market-cap ticker per group (self-adjusting if the cap
+# ordering between classes flips, rather than hardcoding which class "wins").
+# Small and static by design — dual-class S&P members are rare and don't
+# change often; add a group here if a new one surfaces.
+DUAL_CLASS_ISSUERS: tuple[frozenset[str], ...] = (
+    frozenset({"GOOGL", "GOOG"}),   # Alphabet
+    frozenset({"FOXA", "FOX"}),     # Fox Corp
+    frozenset({"NWSA", "NWS"}),     # News Corp
+)
+
+
+def _dedup_dual_class(df: pd.DataFrame) -> pd.DataFrame:
+    """Drop the lower-market-cap ticker of each dual-class group present in `df`."""
+    drop: set[str] = set()
+    for group in DUAL_CLASS_ISSUERS:
+        present = df[df["ticker"].isin(group)]
+        if len(present) > 1:
+            keep = present.loc[present["market_cap"].idxmax(), "ticker"]
+            dropped = set(present["ticker"]) - {keep}
+            drop |= dropped
+            logger.info("Dual-class dedup: keeping %s over %s", keep, sorted(dropped))
+    return df[~df["ticker"].isin(drop)] if drop else df
 
 
 def sample_tickers(
@@ -56,7 +86,8 @@ def sample_tickers(
             removes the bottom ~18 S&P 500 members where option liquidity is poor).
 
     Returns:
-        List of `n` distinct ticker symbols, in draw order.
+        List of `n` distinct ticker symbols, in draw order. Dual-class issuers
+        (see DUAL_CLASS_ISSUERS) contribute at most one ticker.
     """
     if n < 1:
         raise ValueError(f"n must be >= 1, got {n}")
@@ -69,6 +100,7 @@ def sample_tickers(
     df = df[(df["market_cap"] > 0) & df["market_cap"].notna()]
     if min_market_cap > 0:
         df = df[df["market_cap"] >= min_market_cap]
+    df = _dedup_dual_class(df)
 
     universe_size = len(df)
     if n > universe_size:
@@ -100,12 +132,14 @@ def sampling_weights(
     """Return the universe with its normalized sampling probabilities.
 
     Useful for documenting/auditing how concentrated the cap-weighting is (e.g.
-    "top 10 names hold X% of sampling probability").
+    "top 10 names hold X% of sampling probability"). Mirrors `sample_tickers`'s
+    dual-class dedup so the reported probabilities match what actually gets drawn.
     """
     df = (snapshot if snapshot is not None else load_snapshot(snapshot_path)).copy()
     df = df[(df["market_cap"] > 0) & df["market_cap"].notna()].copy()
     if min_market_cap > 0:
         df = df[df["market_cap"] >= min_market_cap].copy()
+    df = _dedup_dual_class(df)
     w = df["market_cap"].to_numpy(dtype=float) ** power
     df["prob"] = w / w.sum()
     return df.sort_values("prob", ascending=False).reset_index(drop=True)

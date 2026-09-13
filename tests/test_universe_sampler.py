@@ -7,7 +7,12 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from options_trader.universe.sampler import sample_tickers, sampling_weights
+from options_trader.universe.sampler import (
+    DUAL_CLASS_ISSUERS,
+    _dedup_dual_class,
+    sample_tickers,
+    sampling_weights,
+)
 
 
 def _snapshot(caps: dict[str, float]) -> pd.DataFrame:
@@ -102,3 +107,51 @@ def test_sampling_weights_normalized_and_sorted(snap):
     assert w["prob"].sum() == pytest.approx(1.0)
     assert w["ticker"].iloc[0] == "BIG"          # highest prob first
     assert w["prob"].iloc[0] == pytest.approx(1_000_000 / (1_000_000 + 50_000))
+
+
+# ---------- dual-class dedup ----------
+
+def _dual_class_snap():
+    # GOOGL > GOOG in cap (real-world-shaped); FOX > FOXA reversed on purpose to
+    # confirm dedup follows the HIGHER cap, not a hardcoded "primary" ticker.
+    caps = {
+        "GOOGL": 4_559.0, "GOOG": 4_513.0,
+        "FOX": 28.0, "FOXA": 25.0,
+        "AAPL": 3_000.0,  # unrelated control, never touched by dedup
+    }
+    return _snapshot(caps)
+
+
+def test_dedup_keeps_higher_cap_ticker_per_group():
+    df = _dedup_dual_class(_dual_class_snap())
+    tickers = set(df["ticker"])
+    assert tickers == {"GOOGL", "FOX", "AAPL"}  # GOOG, FOXA dropped (lower cap)
+
+
+def test_dedup_follows_cap_not_a_hardcoded_side():
+    # Swap which class has the higher cap and confirm the KEPT ticker flips too.
+    df = pd.DataFrame({
+        "ticker": ["GOOGL", "GOOG"], "market_cap": [100.0, 200.0],  # GOOG now bigger
+        "snapshot_date": "2026-06-02",
+    })
+    out = _dedup_dual_class(df)
+    assert list(out["ticker"]) == ["GOOG"]
+
+
+def test_dedup_noop_when_only_one_class_present():
+    caps = {"GOOGL": 4_559.0, "AAPL": 3_000.0}  # no GOOG row at all
+    df = _dedup_dual_class(_snapshot(caps))
+    assert set(df["ticker"]) == {"GOOGL", "AAPL"}
+
+
+def test_sample_tickers_never_draws_both_classes():
+    df = _dual_class_snap()
+    for seed in range(50):
+        drawn = set(sample_tickers(3, seed=seed, snapshot=df, power=0.0))
+        for group in DUAL_CLASS_ISSUERS:
+            assert len(drawn & group) <= 1
+
+
+def test_sampling_weights_dedups_too():
+    w = sampling_weights(snapshot=_dual_class_snap())
+    assert set(w["ticker"]) == {"GOOGL", "FOX", "AAPL"}

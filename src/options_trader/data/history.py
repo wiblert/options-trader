@@ -22,6 +22,7 @@ from alpaca.data.timeframe import TimeFrame
 from alpaca.data.enums import Adjustment
 
 from options_trader.data.stock_return_ts import StockReturnTS
+from options_trader.data.symbol_format import to_alpaca_symbol
 
 
 logger = logging.getLogger(__name__)
@@ -61,9 +62,10 @@ def _from_alpaca(ticker: str, start: date, end: date) -> pd.DataFrame:
     if not api_key or not secret_key:
         raise CredentialsError("ALPACA_API_KEY / ALPACA_SECRET_KEY not set")
 
+    alpaca_symbol = to_alpaca_symbol(ticker)
     client = StockHistoricalDataClient(api_key, secret_key)
     req = StockBarsRequest(
-        symbol_or_symbols=ticker,
+        symbol_or_symbols=alpaca_symbol,
         timeframe=TimeFrame.Day,
         start=datetime.combine(start, datetime.min.time(), tzinfo=timezone.utc),
         end=datetime.combine(end, datetime.min.time(), tzinfo=timezone.utc),
@@ -87,7 +89,7 @@ def _from_alpaca(ticker: str, start: date, end: date) -> pd.DataFrame:
 
     df = df.reset_index()
     if "symbol" in df.columns:
-        df = df[df["symbol"] == ticker].drop(columns=["symbol"])
+        df = df[df["symbol"] == alpaca_symbol].drop(columns=["symbol"])
     df["date"] = pd.to_datetime(df["timestamp"]).dt.tz_convert("US/Eastern").dt.normalize().dt.tz_localize(None)
     df = df.set_index("date")[["open", "high", "low", "close", "volume"]]
     return df.sort_index()
@@ -194,12 +196,13 @@ def get_latest_price(ticker: str) -> float | None:
         return None
 
     try:
+        alpaca_symbol = to_alpaca_symbol(ticker)
         client = StockHistoricalDataClient(api_key, secret_key)
-        req = StockLatestTradeRequest(symbol_or_symbols=ticker)
+        req = StockLatestTradeRequest(symbol_or_symbols=alpaca_symbol)
         with ThreadPoolExecutor(max_workers=1, thread_name_prefix="alpaca-trade") as ex:
             future = ex.submit(client.get_stock_latest_trade, req)
             resp = future.result(timeout=ALPACA_TIMEOUT_S)
-        trade = resp.get(ticker) if resp else None
+        trade = resp.get(alpaca_symbol) if resp else None
         price = float(trade.price) if trade is not None else 0.0
         if price > 0:
             return price

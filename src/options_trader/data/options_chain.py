@@ -42,6 +42,7 @@ from alpaca.trading.enums import AssetStatus, ContractType
 from alpaca.trading.requests import GetOptionContractsRequest
 
 from options_trader.data.history import CredentialsError
+from options_trader.data.symbol_format import to_alpaca_symbol
 from options_trader.valuation.option_valuer import OptionContract, OptionType
 
 
@@ -83,13 +84,20 @@ def _opt_int(value) -> Optional[int]:
 
 # ---------- pure merge (no I/O — the unit-testable core) ----------
 
-def _build_contracts(raw_contracts, snapshots: dict, include_untradable: bool) -> list[OptionContract]:
+def _build_contracts(
+    raw_contracts, snapshots: dict, include_untradable: bool, underlying: str
+) -> list[OptionContract]:
     """Merge the tradable master list with the quote snapshots into OptionContracts.
 
     Args:
         raw_contracts: iterable of Alpaca trading OptionContract models.
         snapshots: dict symbol -> Alpaca OptionsSnapshot (may be missing symbols).
         include_untradable: keep contracts whose `tradable` flag is False.
+        underlying: the CANONICAL (caller-supplied) underlying ticker, stamped
+            onto every contract instead of Alpaca's own `rc.underlying_symbol` —
+            for a dash/dot share-class ticker (e.g. "BRK-B") Alpaca reports its
+            own dot-format symbol, and callers need contracts keyed by the same
+            ticker string they asked for (see `symbol_format.py`).
 
     Returns:
         OptionContract list, sorted by (expiry, strike, type) for stable output.
@@ -111,7 +119,7 @@ def _build_contracts(raw_contracts, snapshots: dict, include_untradable: bool) -
         out.append(
             OptionContract(
                 symbol=rc.symbol,
-                underlying=rc.underlying_symbol,
+                underlying=underlying,
                 strike=float(rc.strike_price),
                 expiry=rc.expiration_date,
                 option_type=_to_option_type(rc.type),
@@ -167,7 +175,7 @@ def _fetch_contracts(
     page_token = None
     for _ in range(MAX_PAGES):
         req = GetOptionContractsRequest(
-            underlying_symbols=[underlying],
+            underlying_symbols=[to_alpaca_symbol(underlying)],
             status=AssetStatus.ACTIVE,
             type=ContractType(option_type.value) if option_type else None,
             expiration_date_gte=expiration_gte,
@@ -201,7 +209,7 @@ def _fetch_snapshots(
     api_key, secret_key = _credentials()
     client = OptionHistoricalDataClient(api_key, secret_key)
     req = OptionChainRequest(
-        underlying_symbol=underlying,
+        underlying_symbol=to_alpaca_symbol(underlying),
         feed=feed,
         type=ContractType(option_type.value) if option_type else None,
         expiration_date_gte=expiration_gte,
@@ -281,7 +289,7 @@ def get_option_chain(
         logger.warning("Quote snapshots unavailable for %s (%r); returning quote-less contracts",
                        underlying, exc)
 
-    contracts = _build_contracts(raw_contracts, snapshots, include_untradable)
+    contracts = _build_contracts(raw_contracts, snapshots, include_untradable, underlying)
     logger.info("Loaded %d option contracts for %s (%d with quotes)",
                 len(contracts), underlying, sum(c.bid is not None for c in contracts))
     return contracts
