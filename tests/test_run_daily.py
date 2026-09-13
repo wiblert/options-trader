@@ -227,48 +227,33 @@ def test_committed_types_counts_positions_and_buys_not_sells():
 
 # ---------- expiry selection ----------
 
-def test_select_expiry_window_spans_a_monthly_cycle(monkeypatch):
-    # A monthly-only name (sole listed expiry = July 17, ~38 DTE) must still be
-    # selectable for a 21-DTE target on 2026-06-09, and the probe window must reach
-    # target+35 days so a full monthly cycle is always covered.
-    from options_trader.run_daily import _select_expiry
-    captured = {}
-
-    def fake_chain(ticker, **kw):
-        captured.update(kw)
-        return [OptionContract(symbol="C", underlying=ticker, strike=100.0,
-                               expiry=date(2026, 7, 17), option_type=OptionType.CALL,
-                               bid=1.0, ask=1.1)]
-
-    monkeypatch.setattr(rd_mod, "get_option_chain", fake_chain)
+def test_expiry_window_spans_a_monthly_cycle():
+    # The probe window must reach target+35 days so a full monthly cycle is
+    # always covered — otherwise a monthly-only name (no weeklies) whose sole
+    # expiry lands between two monthlies would find nothing.
+    from options_trader.run_daily import _expiry_window
     run_date = date(2026, 6, 9)
-    expiry, horizon = _select_expiry("AEE", spot=100.0, target_dte=21, run_date=run_date)
-
-    assert expiry == date(2026, 7, 17)
-    assert horizon == int(np.busday_count(run_date, date(2026, 7, 17)))
+    lo, hi = _expiry_window(target_dte=21, run_date=run_date)
     # lower bound conservative (target-10), upper bound spans a monthly cycle (target+35)
-    assert captured["expiration_gte"] == date.fromordinal(run_date.toordinal() + 11)
-    assert captured["expiration_lte"] == date.fromordinal(run_date.toordinal() + 21 + 35)
+    assert lo == date.fromordinal(run_date.toordinal() + 11)
+    assert hi == date.fromordinal(run_date.toordinal() + 21 + 35)
 
 
-def test_select_expiry_picks_closest_to_target(monkeypatch):
+def test_select_expiry_picks_closest_to_target():
     # given several expiries, the one closest to target_dte wins (window width is moot)
     from options_trader.run_daily import _select_expiry
     run_date = date(2026, 6, 9)
 
-    def fake_chain(ticker, **kw):
-        return [
-            OptionContract(symbol="A", underlying=ticker, strike=100.0,
-                           expiry=date(2026, 6, 26), option_type=OptionType.CALL, bid=1, ask=1.1),
-            OptionContract(symbol="B", underlying=ticker, strike=100.0,
-                           expiry=date(2026, 7, 2), option_type=OptionType.CALL, bid=1, ask=1.1),
-            OptionContract(symbol="C", underlying=ticker, strike=100.0,
-                           expiry=date(2026, 7, 17), option_type=OptionType.CALL, bid=1, ask=1.1),
-        ]
-
-    monkeypatch.setattr(rd_mod, "get_option_chain", fake_chain)
+    chain = [
+        OptionContract(symbol="A", underlying="X", strike=100.0,
+                       expiry=date(2026, 6, 26), option_type=OptionType.CALL, bid=1, ask=1.1),
+        OptionContract(symbol="B", underlying="X", strike=100.0,
+                       expiry=date(2026, 7, 2), option_type=OptionType.CALL, bid=1, ask=1.1),
+        OptionContract(symbol="C", underlying="X", strike=100.0,
+                       expiry=date(2026, 7, 17), option_type=OptionType.CALL, bid=1, ask=1.1),
+    ]
     # target day = June 30; July 2 (DTE 23) is closest
-    expiry, _ = _select_expiry("X", spot=100.0, target_dte=21, run_date=run_date)
+    expiry, _ = _select_expiry("X", chain, target_dte=21, run_date=run_date)
     assert expiry == date(2026, 7, 2)
 
 

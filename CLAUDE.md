@@ -68,7 +68,8 @@ in forecasters, event logic in the event layer. (Why: `docs/decisions.md`.)
 - `docs/decisions.md` — locked architecture decisions (ADRs)
 - `docs/results.md` — forecaster log-score leaderboard + head-to-heads
 - `docs/issues.md` — known model limitations / open conceptual problems
-- `docs/sessions.md` — chronological session log (history)
+- `docs/sessions.md` — chronological session log (history; Sessions 1–9 archived to
+  `docs/sessions-archive.md` to keep this one short)
 
 ## Conventions
 - Python 3.11+; numpy / pandas / scipy / yfinance / alpaca-py. Style: dataclasses, module

@@ -3,36 +3,43 @@
 Canonical live backlog, organized by forecaster-pipeline service. Every forecaster item is
 gated by the standing **log-score** decision criterion (see CLAUDE.md) before it becomes a default.
 
-## ⭐ Architecture / tech-debt cleanup (added S18 — work through these before new features)
+## ⭐ Architecture / tech-debt cleanup (added S18, resolved S19 — none changed behaviour)
 Consolidated from the scattered "P2 cleanup" notes in `docs/architecture-overview.md` + debt found in
-the S17/S18 builds. None change behaviour; all reduce footguns / drift.
-- [ ] **Centralize run config.** `DEFAULT_N_PATHS` differs (`run_daily` 50k vs backtests 10k);
-  `max_fraction` differs (`kelly.py` 0.20 vs `run_daily`/CLI 0.05); risk-free rate 0.04 is hard-coded in
-  several places. Put run parameters in one typed config so the weekly run is reproducible and knobs are
-  discoverable.
-- [ ] **Fix the `index`-named-but-symbol-generic helpers.** `build_eod_index_pdf` / `HistoricalIndexPdf`
-  / `live_index_pdf` are used for arbitrary single tickers (own-options forecaster, S17) — the `index`
-  name now misleads. Rename to a neutral `*_eod_pdf` / `HistoricalEodPdf` (or split a thin index alias),
-  update `option_implied_backtest.py` + `factories.py` callers + docs.
-- [ ] **Blend default fetches SPY/IWM chains per ticker.** In `run_daily` the OIB arm calls
-  `live_index_pdf("SPY"/"IWM")` for every ticker → redundant network. Cache the index PDF per
-  (symbol, run_date, horizon) across the watchlist (mirror `HistoricalIndexPdf`'s cache for the live path).
-- [ ] **Two architecture docs overlap.** `architecture.md` (component map) vs `architecture-overview.md`
-  (holistic). Keep both but state the split in each header and stop duplicating the layer table; or fold
-  the map into an appendix of the overview. (Refreshed S18 — decide the structure next.)
-- [ ] **Factory-mutation hardening** (also under Backtest) — `rolling_log_score_backtest` passes `rd`
-  straight to the factory; a mutating factory corrupts later iterations. `copy.deepcopy(rd)`.
-- [ ] **Dedupe the double chain fetch** — `_select_expiry` and `plan_ticker` both call `get_option_chain`;
-  fetch once and reuse.
-- [ ] **Parallelize per-ticker planning** — tickers are independent but planned sequentially with several
-  network calls each; a thread pool turns a multi-minute 40-name run into seconds. (Bigger now the blend
-  default adds index-chain fetches per ticker.)
-- [ ] **Per-ticker forecaster seed** is fixed at 42 in `run_daily` (MC noise correlated across names);
-  bump per ticker if independence matters.
-- [ ] **Collapse `OptionValuation.edge_pct_buy` / `expected_return_buy`** — algebraically identical
-  (`fair/ask − 1`).
-- [ ] **Trim the long-doc footprint** — `results.md`/`sessions.md` grow unbounded; status.md was trimmed
-  S18 (history → sessions.md). Consider archiving pre-S10 session detail to a `sessions-archive.md`.
+the S17/S18 builds.
+- [x] **Centralize run config.** `config.py` already held the canonical live defaults; closed the
+  remaining drift — `kelly.py`'s own stale `DEFAULT_MAX_FRACTION=0.20` now imports `config`'s 0.05, and
+  5 scripts' hard-coded `risk_free_rate=0.04` now reference `DEFAULT_RISK_FREE_RATE`.
+- [x] **Fix the `index`-named-but-symbol-generic helpers.** `build_eod_index_pdf` → `build_eod_pdf`,
+  `HistoricalIndexPdf` → `HistoricalEodPdf`, `live_index_pdf` → `live_eod_pdf` (full rename, no aliases —
+  internal API, no external consumers). Updated all callers/tests/docs.
+- [x] **Blend default fetches SPY/IWM chains per ticker.** Added `LiveEodPdfCache` keyed on
+  (symbol, run_date, horizon), shared across the whole watchlist run via
+  `_default_forecaster_factory`'s `OptionImpliedBetaFactory(index_pdf_fn=...)`. **Caught by the
+  end-to-end integration run (S19):** the first version cached with check-then-fetch-then-store,
+  which the NEW thread-pooled planning (below) defeats — N ticker threads all miss the cold cache
+  before any of them finishes the fetch, so SPY/IWM still fetched once per ticker (verified live: 4
+  tickers → 4x SPY + 4x IWM chain fetches). Fixed to single-flight PER-KEY locking (hold the lock
+  across the whole miss; other threads requesting the same key block and then reuse the result).
+  Re-verified live: 4 tickers → exactly 1x SPY + 1x IWM. Regression test spawns 8 threads behind a
+  start barrier and asserts exactly 1 underlying fetch (fails 8-vs-1 against the old logic).
+- [x] **Two architecture docs overlap.** Decided the split explicitly in both headers:
+  `architecture-overview.md` owns the ONE Layers table + two-loops diagram + invariants;
+  `architecture.md` goes one level deeper per directory for the complex layers and does not repeat
+  the table.
+- [x] **Factory-mutation hardening** — `rolling_log_score_backtest` now passes `copy.deepcopy(rd)` to
+  the factory.
+- [x] **Dedupe the double chain fetch** — `plan_ticker` fetches the chain once (spanning both the
+  expiry-discovery window and the valuation strike band) and `_select_expiry` takes that chain instead
+  of re-fetching.
+- [x] **Parallelize per-ticker planning** — `run_daily` plans tickers via a `ThreadPoolExecutor`
+  (`max_workers`, default 8; `--workers` CLI flag; `1` = sequential).
+- [x] **Per-ticker forecaster seed** — added `_ticker_seed(base_seed, ticker)` (CRC32-derived, deterministic);
+  `plan_ticker` and `review_position` now seed per-ticker instead of sharing one seed across the watchlist.
+- [x] **Collapse `OptionValuation.edge_pct_buy` / `expected_return_buy`** — removed the algebraically
+  identical `expected_return_buy` field; `edge_pct_buy` is the one used downstream (review app).
+- [x] **Trim the long-doc footprint** — split Sessions 1–9 out of `docs/sessions.md` into
+  `docs/sessions-archive.md` (783 → 521 lines). `results.md` (419 lines) left as-is — a leaderboard doc,
+  not narrative, not yet unwieldy.
 
 ## Data — `data/history.py`, `StockReturnTS`
 - [x] **Live-price forecast anchor** (Session 7) — `get_latest_price()` (Alpaca latest-trade) so
@@ -143,7 +150,7 @@ the S17/S18 builds. None change behaviour; all reduce footguns / drift.
   (a) tie-breaker window where event-GARCH recovers ≈+0.224; (b) **vol-stress regime gate** for OIB
   (its edge is large+robust only when vol is elevated — most evidence supports this); (c) OIB+event-GARCH
   **ensemble** (different edges). Else shelve as built-and-measured. Deferred per user: P-measure
-  de-meaning, VRP variance. Also open: `live_index_pdf` is calls-only (EOD builder uses OTM puts+calls —
+  de-meaning, VRP variance. Also open: `live_eod_pdf` is calls-only (EOD builder uses OTM puts+calls —
   unify); BL strike-range tail truncation. See `docs/results.md` (event 2-window table).
   ✅ S15 gating blocker (historical index PDF per past date) RESOLVED — `get_option_contracts(status=
   INACTIVE)` + `get_option_bars(Day)`; see `docs/sessions.md` S16.

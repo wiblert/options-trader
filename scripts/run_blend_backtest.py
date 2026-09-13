@@ -45,13 +45,14 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from options_trader.config import DEFAULT_RISK_FREE_RATE
 from options_trader.data.history import get_history
 from options_trader.data.events.calendar import EventCalendar
 from options_trader.data.events.composite import CompositeEventSource
 from options_trader.data.events.fomc_source import FomcCalendarSource
 from options_trader.data.events.yfinance_source import YFinanceEarningsSource
 from options_trader.backtest.option_implied_beta_backtest import (
-    HistoricalIndexPdf,
+    HistoricalEodPdf,
     _spot_lookup_from_ts,
 )
 from options_trader.backtest.option_implied_backtest import (
@@ -82,7 +83,7 @@ def _build_index_pdf(start, end):
     print("Fetching index histories (SPY, IWM) ...", flush=True)
     spy = get_history("SPY", start, end)
     iwm = get_history("IWM", start, end)
-    return spy, iwm, HistoricalIndexPdf(_spot_lookup_from_ts(spy, iwm), risk_free_rate=0.04)
+    return spy, iwm, HistoricalEodPdf(_spot_lookup_from_ts(spy, iwm), risk_free_rate=DEFAULT_RISK_FREE_RATE)
 
 
 def _event_source():
@@ -254,7 +255,7 @@ def run_vs_options(args, tickers):
             blend_out = rolling_log_score_backtest_blend_event(
                 ts, spy, iwm, index_pdf, cal, horizon_days=args.horizon,
                 holdout_days=args.holdout, n_paths=args.n_paths, base_seed=args.seed)
-            ticker_pdf = HistoricalTickerPdf(_spot_lookup_from_ts(ts), risk_free_rate=0.04)
+            ticker_pdf = HistoricalTickerPdf(_spot_lookup_from_ts(ts), risk_free_rate=DEFAULT_RISK_FREE_RATE)
             opt = rolling_log_score_backtest_option_implied(
                 ts, ticker_pdf, horizon_days=args.horizon, holdout_days=args.holdout,
                 n_paths=args.n_paths, base_seed=args.seed)

@@ -1,8 +1,13 @@
 # Architecture Overview
 
-Holistic view of options-trader. For the per-module component map + signatures see
-`docs/architecture.md`; for how to operate it see `docs/runbook.md`; for *why*
-decisions were made see `docs/decisions.md`.
+Holistic view of options-trader: what it does, the two loops, the ONE layers
+summary table, and the cross-cutting invariants + improvement backlog.
+
+**Split with `docs/architecture.md`:** that doc goes one level deeper — per-module
+function signatures for the layers complex enough to need it (data/, forecast/,
+backtest/, universe/) — and does not repeat this file's Layers table. For how to
+operate the system see `docs/runbook.md`; for *why* decisions were made see
+`docs/decisions.md`.
 
 ---
 
@@ -119,7 +124,7 @@ Both loops build the forecaster through a factory, so the validated forecaster t
   event-conditioned `OptionImpliedBetaFactory`, S18). `run_daily` builds a live `EventCalendar`
   (yfinance earnings + auto-fetched FOMC + manual macro CSV) per ticker and a **forward event schedule**
   (`EventCalendar.forward_schedule`); the OIB arm additionally pulls the SPY/IWM risk-neutral PDF
-  (`live_index_pdf`) and conditions its idiosyncratic residuals on earnings. Each arm degrades to plain
+  (`live_eod_pdf`) and conditions its idiosyncratic residuals on earnings. Each arm degrades to plain
   bootstrap on feed failure (or globally via `--no-events`); `--garch-fhs` selects GARCH-FHS instead.
 - The validated **intraday anchor** is likewise live (`live_else_close_anchor`).
 

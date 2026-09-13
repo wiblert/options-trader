@@ -53,6 +53,7 @@ from options_trader.valuation.option_valuer import (
 )
 from options_trader.execution.broker import AlpacaBroker, OrderResult, PositionSnapshot
 from options_trader.config import DEFAULT_N_PATHS, DEFAULT_RISK_FREE_RATE
+from options_trader.run_daily import _ticker_seed
 
 
 logger = logging.getLogger(__name__)
@@ -164,7 +165,7 @@ def review_position(
         rd = ReturnDistribution(np.diff(np.log(ts.close)), label=occ.underlying)
         ctx = ForecastContext(
             ticker=occ.underlying, ts=ts, rd=rd, horizon=horizon,
-            run_date=run_date, n_paths=n_paths, seed=seed,
+            run_date=run_date, n_paths=n_paths, seed=_ticker_seed(seed, occ.underlying),
         )
         forecaster = forecaster_factory(ctx)
         review.events_in_horizon = event_days_in_horizon(forecaster)

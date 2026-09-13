@@ -89,8 +89,7 @@ class OptionValuation:
     sell_price: Optional[float]       # the bid — what we receive to open a short
     edge_buy: Optional[float]         # fair_value - ask  (>0 ⇒ underpriced)
     edge_sell: Optional[float]        # bid - fair_value  (>0 ⇒ overpriced)
-    edge_pct_buy: Optional[float]     # edge_buy / ask    (return on premium paid)
-    expected_return_buy: Optional[float]  # fair_value / ask - 1
+    edge_pct_buy: Optional[float]     # edge_buy / ask == fair_value / ask - 1 (return on premium paid)
     breakeven: Optional[float]        # underlying price at expiry to break even on a long
     recommendation: Recommendation
 
@@ -200,13 +199,12 @@ class OptionValuer:
         buy_price = ask
         sell_price = bid
 
-        edge_buy = edge_sell = edge_pct_buy = expected_return_buy = breakeven = None
+        edge_buy = edge_sell = edge_pct_buy = breakeven = None
         recommendation = Recommendation.NO_QUOTE
 
         if ask is not None and ask > 0:
             edge_buy = fair_value - ask
             edge_pct_buy = edge_buy / ask
-            expected_return_buy = fair_value / ask - 1.0
             breakeven = (
                 strike + ask if contract.option_type == OptionType.CALL else strike - ask
             )
@@ -234,7 +232,6 @@ class OptionValuer:
             edge_buy=edge_buy,
             edge_sell=edge_sell,
             edge_pct_buy=edge_pct_buy,
-            expected_return_buy=expected_return_buy,
             breakeven=breakeven,
             recommendation=recommendation,
         )

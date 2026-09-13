@@ -43,6 +43,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
+from options_trader.config import DEFAULT_RISK_FREE_RATE
 from options_trader.data.history import get_history
 from options_trader.data.events.calendar import EventCalendar
 from options_trader.data.events.composite import CompositeEventSource
@@ -195,7 +196,7 @@ def main() -> None:
     for i, tkr in enumerate(tickers, 1):
         try:
             ts = get_history(tkr, args.start, args.end)
-            ticker_pdf = HistoricalTickerPdf(_spot_lookup_from_ts(ts), risk_free_rate=0.04)
+            ticker_pdf = HistoricalTickerPdf(_spot_lookup_from_ts(ts), risk_free_rate=DEFAULT_RISK_FREE_RATE)
             rows, skipped = _collect_rows(
                 tkr, ts, ticker_pdf, event_source,
                 horizon=args.horizon, holdout=args.holdout,

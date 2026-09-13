@@ -15,10 +15,10 @@ import pytest
 from options_trader.data.options_history import OptionBar
 from options_trader.data.stock_return_ts import StockReturnTS
 from options_trader.backtest.option_implied_beta_backtest import (
-    HistoricalIndexPdf,
+    HistoricalEodPdf,
     _spot_lookup_from_ts,
     _truncate_ts_by_date,
-    build_eod_index_pdf,
+    build_eod_pdf,
     rolling_log_score_backtest_option_implied_beta,
 )
 from options_trader.valuation.black_scholes import bs_price
@@ -72,10 +72,10 @@ class _StubBarsProvider:
         return out
 
 
-def test_build_eod_index_pdf_recovers_lognormal():
+def test_build_eod_pdf_recovers_lognormal():
     spot = 560.0
     t = (EXPIRY - RUN_DATE).days / 365.0
-    pdf = build_eod_index_pdf(
+    pdf = build_eod_pdf(
         "SPY", RUN_DATE, horizon_days=21, spot=spot,
         trading_client=_StubTradingClient("SPY", spot),
         bars_provider=_StubBarsProvider(spot, t), risk_free_rate=R,
@@ -86,12 +86,12 @@ def test_build_eod_index_pdf_recovers_lognormal():
     assert pdf.std_price() == pytest.approx(ln_std, rel=0.10)
 
 
-def test_build_eod_index_pdf_raises_when_no_contracts():
+def test_build_eod_pdf_raises_when_no_contracts():
     class _Empty:
         def get_option_contracts(self, req):
             return SimpleNamespace(option_contracts=[], next_page_token=None)
     with pytest.raises(ValueError):
-        build_eod_index_pdf("SPY", RUN_DATE, 21, 560.0,
+        build_eod_pdf("SPY", RUN_DATE, 21, 560.0,
                             trading_client=_Empty(), bars_provider=_StubBarsProvider(560.0, 0.08))
 
 
@@ -236,7 +236,7 @@ def test_historical_index_pdf_caches():
         return orig(req)
     tc.get_option_contracts = counting
 
-    src = HistoricalIndexPdf(lambda s, d: spot, trading_client=tc,
+    src = HistoricalEodPdf(lambda s, d: spot, trading_client=tc,
                              bars_provider=_StubBarsProvider(spot, t), risk_free_rate=R)
     a = src("SPY", RUN_DATE, 21)
     n_after_first = calls["n"]

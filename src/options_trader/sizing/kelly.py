@@ -35,12 +35,11 @@ from typing import Optional
 import numpy as np
 from scipy.optimize import brentq
 
+from options_trader.config import DEFAULT_KELLY_FRACTION, DEFAULT_MAX_FRACTION
 from options_trader.forecast.price_distribution import PriceDistribution
 from options_trader.valuation.option_valuer import OptionType, OptionValuation
 
 
-DEFAULT_KELLY_FRACTION = 0.25   # ¼-Kelly
-DEFAULT_MAX_FRACTION = 0.20     # never deploy >20% of bankroll on one position
 DEFAULT_CONTRACT_MULTIPLIER = 100
 
 

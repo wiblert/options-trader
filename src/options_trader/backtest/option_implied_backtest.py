@@ -13,8 +13,8 @@ sale. (See the driver, scripts/run_option_implied_backtest.py.)
 
 Per holdout day t (run_date = dates[t]):
   1. Build the ticker's own risk-neutral PDF AS OF run_date from that day's EOD option
-     closes — reusing `build_eod_index_pdf` (symbol-generic despite its name: liquid
-     monthly expiry, OTM put+call, volume-weighted quadratic-in-log-moneyness smile).
+     closes — reusing `build_eod_pdf` (liquid monthly expiry, OTM put+call,
+     volume-weighted quadratic-in-log-moneyness smile; works for any symbol).
   2. Build `OptionImpliedForecaster` from it and forecast to close[t+horizon].
   3. Score (PIT + KDE log score) — identical scoring to `rolling_log_score_backtest`.
 
@@ -42,7 +42,7 @@ from options_trader.backtest.log_score import (
     _weighted_cdf_at,
 )
 from options_trader.backtest.option_implied_beta_backtest import (
-    build_eod_index_pdf,
+    build_eod_pdf,
     _spot_lookup_from_ts,
 )
 from options_trader.data.options_history import AlpacaOptionBarsProvider, OptionBarsProvider
@@ -60,7 +60,7 @@ class HistoricalTickerPdf:
     `spot_lookup(symbol, run_date)` supplies the underlying spot (e.g. the ticker's
     StockReturnTS close on run_date — see `_spot_lookup_from_ts`). Caches per
     (ticker, run_date, horizon) so repeated probes reuse the (expensive) chain fetch.
-    Mirrors `option_implied_beta_backtest.HistoricalIndexPdf`.
+    Mirrors `option_implied_beta_backtest.HistoricalEodPdf`.
     """
 
     def __init__(self, spot_lookup, *, trading_client=None,
@@ -77,7 +77,7 @@ class HistoricalTickerPdf:
         key = (symbol, run_date, horizon_days)
         if key not in self._cache:
             spot = float(self.spot_lookup(symbol, run_date))
-            self._cache[key] = build_eod_index_pdf(
+            self._cache[key] = build_eod_pdf(
                 symbol, run_date, horizon_days, spot,
                 trading_client=self.trading_client, bars_provider=self.bars_provider,
                 risk_free_rate=self.risk_free_rate, **self.build_kwargs,

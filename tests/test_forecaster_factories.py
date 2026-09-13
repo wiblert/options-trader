@@ -20,9 +20,11 @@ from options_trader.forecast.bootstrap_forecaster import BootstrapForecaster
 from options_trader.forecast.event_bootstrap_forecaster import (
     EventConditionedBootstrapForecaster,
 )
+from options_trader.forecast import factories as factories_mod
 from options_trader.forecast.factories import (
     EventBootstrapFactory,
     ForecastContext,
+    LiveEodPdfCache,
     OptionImpliedBetaFactory,
     bootstrap_factory,
     event_days_in_horizon,
@@ -187,3 +189,83 @@ def test_option_implied_beta_factory_degrades_on_failure():
     )
     f = factory(_ctx())
     assert isinstance(f, BootstrapForecaster)  # graceful fallback
+
+
+# ---------- LiveEodPdfCache ----------
+
+def test_live_eod_pdf_cache_fetches_each_key_once(monkeypatch):
+    calls = []
+
+    def _fake_live_eod_pdf(symbol, run_date, horizon_days, *, risk_free_rate):
+        calls.append((symbol, run_date, horizon_days))
+        return _stub_index_pdf(symbol, run_date, horizon_days)
+
+    monkeypatch.setattr(factories_mod, "live_eod_pdf", _fake_live_eod_pdf)
+    cache = LiveEodPdfCache()
+
+    # same (symbol, run_date, horizon) requested repeatedly, as OptionImpliedBetaFactory
+    # would do once per ticker across a watchlist run sharing run_date/horizon.
+    for _ in range(5):
+        cache("SPY", RUN_DATE, HORIZON)
+        cache("IWM", RUN_DATE, HORIZON)
+
+    assert len(calls) == 2  # one fetch per distinct key, not one per ticker
+    assert set(calls) == {("SPY", RUN_DATE, HORIZON), ("IWM", RUN_DATE, HORIZON)}
+
+
+def test_live_eod_pdf_cache_single_flight_under_concurrency(monkeypatch):
+    # The real bug this guards: run_daily plans tickers concurrently (thread pool),
+    # so N threads can all miss a cold cache before any of them finishes the
+    # (slow) fetch. A start barrier forces every thread to request the SAME key
+    # at once; single-flight locking must still collapse it to exactly one fetch.
+    import threading
+    import time
+
+    n = 8
+    calls = []
+    calls_lock = threading.Lock()
+    start_barrier = threading.Barrier(n)
+
+    def _fake_live_eod_pdf(symbol, run_date, horizon_days, *, risk_free_rate):
+        time.sleep(0.05)          # simulate a slow network fetch (widens the race window)
+        with calls_lock:
+            calls.append((symbol, run_date, horizon_days))
+        return _stub_index_pdf(symbol, run_date, horizon_days)
+
+    monkeypatch.setattr(factories_mod, "live_eod_pdf", _fake_live_eod_pdf)
+    cache = LiveEodPdfCache()
+
+    results = []
+    results_lock = threading.Lock()
+
+    def _worker():
+        start_barrier.wait(timeout=5)   # all n threads call cache() at once
+        pdf = cache("SPY", RUN_DATE, HORIZON)
+        with results_lock:
+            results.append(pdf)
+
+    threads = [threading.Thread(target=_worker) for _ in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+
+    assert len(calls) == 1  # single-flight: only the first thread actually fetched
+    assert len(results) == n
+    assert all(r is results[0] for r in results)  # every thread got the SAME cached PDF
+
+
+def test_live_eod_pdf_cache_distinguishes_keys(monkeypatch):
+    calls = []
+
+    def _fake_live_eod_pdf(symbol, run_date, horizon_days, *, risk_free_rate):
+        calls.append((symbol, run_date, horizon_days))
+        return _stub_index_pdf(symbol, run_date, horizon_days)
+
+    monkeypatch.setattr(factories_mod, "live_eod_pdf", _fake_live_eod_pdf)
+    cache = LiveEodPdfCache()
+
+    cache("SPY", RUN_DATE, HORIZON)
+    cache("SPY", RUN_DATE, HORIZON + 1)  # different horizon -> distinct fetch
+
+    assert len(calls) == 2

@@ -8,7 +8,7 @@ forecaster can be gated by the standing decision criterion (CLAUDE.md).
 Per holdout day t (run_date = dates[t]):
   1. Build the SPY & IWM risk-neutral PDFs AS OF run_date from that day's EOD option
      closes (a clean OTM-put + OTM-call, volume-weighted, quadratic-in-log-moneyness
-     smile — see `build_eod_index_pdf` and docs/sessions.md S16 for why).
+     smile — see `build_eod_pdf` and docs/sessions.md S16 for why).
   2. Truncate the ticker AND index histories to <= run_date (no look-ahead) and let
      `OptionImpliedBetaFactory` assemble the forecaster (betas + idiosyncratic
      residuals from training data, index PDFs from step 1).
@@ -19,7 +19,7 @@ Dates where the index PDF can't be built (illiquid expiry, missing bars) are SKI
 and counted, NOT silently degraded to bootstrap — a degrade would pollute the paired
 comparison against the incumbent.
 
-Network-backed and slow (two index chains per run_date); `HistoricalIndexPdf` caches
+Network-backed and slow (two index chains per run_date); `HistoricalEodPdf` caches
 per (symbol, run_date, horizon) so multiple tickers sharing a calendar reuse PDFs.
 """
 
@@ -102,7 +102,7 @@ def _eod_close_by_strike(
     return out
 
 
-def build_eod_index_pdf(
+def build_eod_pdf(
     symbol: str,
     run_date: date,
     horizon_days: int,
@@ -194,7 +194,7 @@ def build_eod_index_pdf(
     return pdf
 
 
-class HistoricalIndexPdf:
+class HistoricalEodPdf:
     """Cached `IndexPdfFn`: (symbol, run_date, horizon) -> ImpliedPDF from EOD bars.
 
     `spot_lookup(symbol, run_date)` supplies the index spot (e.g. the index
@@ -216,7 +216,7 @@ class HistoricalIndexPdf:
         key = (symbol, run_date, horizon_days)
         if key not in self._cache:
             spot = float(self.spot_lookup(symbol, run_date))
-            self._cache[key] = build_eod_index_pdf(
+            self._cache[key] = build_eod_pdf(
                 symbol, run_date, horizon_days, spot,
                 trading_client=self.trading_client, bars_provider=self.bars_provider,
                 risk_free_rate=self.risk_free_rate, **self.build_kwargs,
@@ -255,7 +255,7 @@ def rolling_log_score_backtest_option_implied_beta(
     """Point-in-time rolling backtest of the Option-Implied Beta forecaster.
 
     `index_pdf_fn(symbol, run_date, horizon)` returns the as-of index PDF (use
-    `HistoricalIndexPdf`). Dates where it raises are skipped and counted.
+    `HistoricalEodPdf`). Dates where it raises are skipped and counted.
     """
     if horizon_days < 1 or holdout_days < 1:
         raise ValueError("horizon_days and holdout_days must be >= 1")

@@ -1,10 +1,12 @@
 # Status
 
-_As of 2026-06-23 (end of Session 18). Update this at every session end._
+_As of 2026-09-13 (end of Session 19). Update this at every session end._
 
 ## Build
-- Clean. **450 tests passing** (`python -m pytest -q`). Tests are synthetic / no-network.
-- Install: `pip install -e .`; venv at `./venv`. No new deps pending. No git remote yet.
+- Clean. **453 tests passing** (`python -m pytest -q`). Tests are synthetic / no-network; also
+  end-to-end live-verified against real Alpaca/yfinance data this session (see Session 19).
+- Install: `pip install -e .`; venv at `./venv`. No new deps pending.
+- Git remote: `https://github.com/wiblert/options-trader` (public), pushed Session 19.
 
 ## Components
 | Layer | State |
@@ -44,12 +46,8 @@ _As of 2026-06-23 (end of Session 18). Update this at every session end._
 
 ## Recommended next step
 _Production default is now the **50/50 blend** (event-bootstrap ⊕ event-OIB), switched S18 per user
-direction. The highest-priority follow-ups, in order:_
-
-**⭐ NEXT SESSION — clean up the architecture to-dos** (user request, S18). A new
-**"Architecture / tech-debt cleanup"** section now exists in `docs/todo.md` (config centralization,
-the symbol-generic-but-named-`index` helpers, the two-architecture-doc overlap, double chain fetch,
-per-ticker parallelism, factory-mutation hardening, etc.). Work through it before adding new features.
+direction. The Architecture / tech-debt cleanup section in `docs/todo.md` is now fully resolved
+(Session 19). The highest-priority follow-ups, in order:_
 
 **A. Validate the blend default properly** (it shipped on a single-window edge). Gate it on a
 **held-out 2nd window** + build the **vol/beta router** (`docs/todo.md` ensemble item) — item 1 showed
@@ -92,6 +90,33 @@ forecaster** (Student-t / jump diffusion) remains the highest-value open forecas
 Full backlog: `docs/todo.md`.
 
 ## Last worked on
+**Session 19 (2026-09-13) — GitHub remote + full architecture/tech-debt cleanup.**
+Pushed the project to `https://github.com/wiblert/options-trader` (public repo, initial commit +
+description). Then worked through the entire S18 "Architecture / tech-debt cleanup" section in
+`docs/todo.md` end to end (10 items, all resolved — see todo.md for per-item detail): centralized the
+remaining `risk_free_rate`/`max_fraction` drift into `config.py`; renamed the misleading `index`-named
+helpers (`build_eod_index_pdf`→`build_eod_pdf`, `HistoricalIndexPdf`→`HistoricalEodPdf`,
+`live_index_pdf`→`live_eod_pdf`); added `LiveEodPdfCache` so the blend's OIB arm fetches SPY/IWM chains
+once per watchlist run instead of once per ticker; clarified the architecture.md /
+architecture-overview.md split in both headers; hardened `rolling_log_score_backtest` against a
+mutating factory (`copy.deepcopy(rd)`); deduped the double option-chain fetch in `plan_ticker`/
+`_select_expiry`; parallelized per-ticker planning in `run_daily` via `ThreadPoolExecutor` (`--workers`,
+default 8); added `_ticker_seed` so MC noise is decorrelated across tickers instead of sharing seed=42;
+collapsed the duplicate `OptionValuation.expected_return_buy` field; and split `docs/sessions.md`
+Sessions 1–9 into `docs/sessions-archive.md`. All were mechanical/structural — no behavior change.
++2 tests (`LiveEodPdfCache`) → 452 pass.
+**Then ran a live end-to-end integration test** (`run_daily` dry-run against real Alpaca/yfinance,
+no `--live`) and it caught a real bug the unit tests missed: `LiveEodPdfCache`'s check-then-fetch-
+then-store logic is defeated by the NEW thread-pooled planning — verified live, 4 tickers produced
+4x SPY + 4x IWM chain fetches instead of the intended 1x each. Fixed to single-flight per-key locking
+(the lock is held across the whole cache miss, so concurrent requests for the same key block and
+reuse the result instead of all fetching). Re-verified live: 4 tickers → exactly 1x SPY + 1x IWM.
+Added a concurrency regression test (8 threads behind a start barrier; fails 8-vs-1 against the old
+logic, passes 1-vs-1 against the fix) — the earlier sequential-only test couldn't have caught this.
++1 test → **453 pass.** Full CLI (`python -m options_trader.run_daily --tickers ...`) run end-to-end
+dry-run multiple times post-fix: EXIT pass reviewed real held positions (AXP/MRNA/TRGP), ENTRY pass
+planned 2–4 tickers concurrently with correct sizing/caps output, zero errors.
+
 **Session 18 (2026-06-23) — 50/50 blend forecaster (event-bootstrap ⊕ event-OIB): ensemble to-do (d).**
 Built the path-level 50/50 probability mixture: `forecast/blend_forecaster.py`
 (`BlendForecaster` + pure `blend_price_distributions` — stacks both forecasters' weighted price samples,
@@ -137,5 +162,7 @@ Full table + caveats in `docs/results.md`; chart `output/option_implied_quantile
 
 ## Older sessions
 Session 16 cont.4 and earlier (S1–S16) live in `docs/sessions.md` (full chronological history) —
-trimmed from here in S18 to keep this doc small per the start-of-session contract. Decisions in
-`docs/decisions.md`, forecaster numbers in `docs/results.md`.
+trimmed from here in S18 to keep this doc small per the start-of-session contract. Sessions 1–9 were
+further split out of `docs/sessions.md` itself into `docs/sessions-archive.md` (S18 tech-debt cleanup)
+to keep that file's read cost low too. Decisions in `docs/decisions.md`, forecaster numbers in
+`docs/results.md`.

@@ -15,6 +15,7 @@ sharpness simultaneously.
 
 from __future__ import annotations
 
+import copy
 import dataclasses
 import logging
 from dataclasses import dataclass, field, asdict
@@ -206,7 +207,9 @@ def rolling_log_score_backtest(
             )
             spot = float(anchor_fn(ctx))
 
-        forecaster = forecaster_factory(rd)
+        # Defend against a factory that mutates rd (e.g. smooth_samples()) —
+        # that would corrupt every later iteration sharing this same object.
+        forecaster = forecaster_factory(copy.deepcopy(rd))
         fcast = forecaster.forecast(horizon_days=horizon_days, spot=spot)
 
         pct = _weighted_cdf_at(fcast, realized)

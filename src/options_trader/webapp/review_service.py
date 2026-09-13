@@ -393,7 +393,6 @@ def _buy_dict(cand: Candidate, *, item_id: str, holder: dict, history_bars: int)
         "prob_itm": v.prob_itm,
         "edge_buy": v.edge_buy,
         "edge_pct_buy": v.edge_pct_buy,
-        "expected_return_buy": v.expected_return_buy,
         "breakeven": v.breakeven,
         "recommendation": v.recommendation.value,
         "forecast_mean": d.forecast_mean,

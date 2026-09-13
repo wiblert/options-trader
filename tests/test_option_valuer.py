@@ -112,7 +112,6 @@ def test_buy_when_fair_value_exceeds_ask():
     assert v.recommendation == Recommendation.BUY
     assert v.edge_buy == pytest.approx(3.0)
     assert v.edge_pct_buy == pytest.approx(3.0 / 7.0)
-    assert v.expected_return_buy == pytest.approx(10.0 / 7.0 - 1.0)
 
 
 def test_sell_when_fair_value_below_bid():

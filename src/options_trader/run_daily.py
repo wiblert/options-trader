@@ -30,6 +30,8 @@ from __future__ import annotations
 
 import argparse
 import logging
+import zlib
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -58,6 +60,7 @@ from options_trader.data.events.yfinance_source import YFinanceEarningsSource
 from options_trader.forecast.factories import (
     EventBootstrapFactory,
     GarchFhsFactory,
+    LiveEodPdfCache,
     OptionImpliedBetaFactory,
     BlendFactory,
     ForecastContext,
@@ -91,6 +94,11 @@ from options_trader.portfolio.constructor import (
 
 logger = logging.getLogger(__name__)
 
+# Tickers are planned independently (their own history/chain/forecast calls), so a
+# thread pool turns a multi-minute sequential 40-name run into seconds — each
+# ticker is I/O-bound (network) for most of its wall time. Bounded so we don't
+# hammer the data/broker APIs with a large watchlist.
+DEFAULT_MAX_WORKERS = 8
 DEFAULT_N_TICKERS = 40        # watchlist size when sampling
 # Uniform sampling (power=0.0) — we don't favour large caps, just require options
 # liquidity. The min-market-cap floor filters the thin-chain tail of the S&P 500.
@@ -128,10 +136,17 @@ def _default_forecaster_factory(event_window: int = 0) -> ForecasterFactory:
         FomcCalendarSource(),
         ManualCalendarSource(MANUAL_EVENTS_CSV),
     )
+    # Shared across every ticker in the watchlist: the OIB arm pulls the SPY/IWM
+    # PDF per ticker, but run_date and (usually) horizon are the same across the
+    # whole run, so caching per (symbol, run_date, horizon) turns N chain fetches
+    # into ~2 (SPY + IWM) for the entire batch.
+    index_pdf_cache = LiveEodPdfCache()
     return BlendFactory(
         [
             EventBootstrapFactory(source, event_window=event_window),
-            OptionImpliedBetaFactory(event_source=source, event_window=event_window),
+            OptionImpliedBetaFactory(
+                index_pdf_fn=index_pdf_cache, event_source=source, event_window=event_window,
+            ),
         ],
         weights=(0.5, 0.5),
     )
@@ -192,16 +207,22 @@ class DailyRunResult:
         return self.total_cost / self.bankroll if self.bankroll else 0.0
 
 
-def _select_expiry(ticker: str, spot: float, target_dte: int, run_date: date) -> tuple[date, int]:
-    """Pick the listed expiry whose DTE is closest to target_dte.
+def _ticker_seed(base_seed: int, ticker: str) -> int:
+    """Per-ticker MC seed derived from `base_seed` and the symbol.
 
-    Enumerates expiries from a cheap ATM-strike chain pull over a DTE window
-    around the target, then takes the listed expiry CLOSEST to target_dte.
-    Raises OptionsChainError if none are listed.
+    A single shared seed across a whole watchlist run correlates the Monte-Carlo
+    noise between names (same draw shape, different scale) — this decorrelates
+    it while staying fully deterministic/reproducible given base_seed + ticker.
+    """
+    return base_seed + zlib.crc32(ticker.encode()) % 10_000
 
-    Window sizing: the upper bound reaches target_dte + 35 days so the window always
-    spans a full monthly-expiry cycle (consecutive 3rd-Friday monthlies are ≤35 days
-    apart). Without this, a target that lands BETWEEN two monthly expirations finds
+
+def _expiry_window(target_dte: int, run_date: date) -> tuple[date, date]:
+    """DTE window used to discover listed expiries around target_dte.
+
+    Upper bound reaches target_dte + 35 days so the window always spans a full
+    monthly-expiry cycle (consecutive 3rd-Friday monthlies are ≤35 days apart).
+    Without this, a target that lands BETWEEN two monthly expirations finds
     nothing for names that list ONLY monthlies (no weeklies) — e.g. most mid-caps —
     and they error out. The lower bound stays conservative (target − 10) so a liquid
     name with weeklies isn't pulled to an ultra-short expiry; widening the window only
@@ -209,11 +230,18 @@ def _select_expiry(ticker: str, spot: float, target_dte: int, run_date: date) ->
     """
     lo = run_date.fromordinal(run_date.toordinal() + max(1, target_dte - 10))
     hi = run_date.fromordinal(run_date.toordinal() + target_dte + 35)
-    chain = get_option_chain(
-        ticker, option_type=OptionType.CALL,
-        expiration_gte=lo, expiration_lte=hi,
-        strike_gte=spot * 0.98, strike_lte=spot * 1.02,
-    )
+    return lo, hi
+
+
+def _select_expiry(
+    ticker: str, chain: list, target_dte: int, run_date: date
+) -> tuple[date, int]:
+    """Pick the listed expiry whose DTE is closest to target_dte.
+
+    `chain` must already span the DTE window from `_expiry_window` (the caller
+    fetches it once and reuses it for valuation too — see `plan_ticker`).
+    Raises OptionsChainError if no expiries are listed.
+    """
     expiries = sorted({c.expiry for c in chain})
     if not expiries:
         raise OptionsChainError(f"no expiries near {target_dte} DTE for {ticker}")
@@ -259,7 +287,17 @@ def plan_ticker(
         spot = anchored.spot
         plan.spot, plan.spot_source = spot, anchored.source
 
-        expiry, horizon = _select_expiry(ticker, spot, target_dte, run_date)
+        # One chain fetch spans both the expiry-discovery window and the
+        # valuation strike band, so _select_expiry and the candidate scan
+        # below share it instead of double-fetching the same underlying.
+        lo, hi = _expiry_window(target_dte, run_date)
+        chain = get_option_chain(
+            ticker,
+            expiration_gte=lo, expiration_lte=hi,
+            strike_gte=spot * min(0.98, 1 - strike_window),
+            strike_lte=spot * max(1.02, 1 + strike_window),
+        )
+        expiry, horizon = _select_expiry(ticker, chain, target_dte, run_date)
         plan.expiry, plan.horizon = expiry, horizon
         if horizon < 1:
             plan.error = f"selected expiry {expiry} is <1 trading day out"
@@ -271,7 +309,7 @@ def plan_ticker(
         # bootstrap is the fallback. forecast() signature is identical either way.
         ctx = ForecastContext(
             ticker=ticker, ts=ts, rd=rd, horizon=horizon,
-            run_date=run_date, n_paths=n_paths, seed=seed,
+            run_date=run_date, n_paths=n_paths, seed=_ticker_seed(seed, ticker),
         )
         forecaster = forecaster_factory(ctx)
         plan.events_in_horizon = event_days_in_horizon(forecaster)
@@ -280,13 +318,11 @@ def plan_ticker(
         if forecast_sink is not None:
             forecast_sink(ticker, ts, pdist, spot, horizon)
 
-        chain = get_option_chain(
-            ticker,
-            expiration_gte=expiry, expiration_lte=expiry,
-            strike_gte=spot * (1 - strike_window), strike_lte=spot * (1 + strike_window),
-        )
+        lo_strike, hi_strike = spot * (1 - strike_window), spot * (1 + strike_window)
         for c in chain:
-            if c.ask is None:
+            if c.expiry != expiry or c.ask is None:
+                continue
+            if not (lo_strike <= c.strike <= hi_strike):
                 continue
             v = valuer.value(pdist, c, spot=spot, valuation_date=run_date)
             if v.recommendation != Recommendation.BUY:
@@ -381,6 +417,7 @@ def run_daily(
     forecaster_factory: Optional[ForecasterFactory] = None,
     sell_threshold: float = 0.15,
     skip_manage: bool = False,
+    max_workers: int = DEFAULT_MAX_WORKERS,
 ) -> DailyRunResult:
     """Plan every ticker, apply the portfolio caps, then (unless dry-run) submit.
 
@@ -426,17 +463,28 @@ def run_daily(
     current_premium = sum(p.market_value for p in positions)
     held_by_underlying = _committed_types_by_underlying(positions, open_orders)
 
-    # 1) plan every ticker (no orders yet)
-    plans: list[TickerPlan] = []
-    for ticker in tickers:
+    # 1) plan every ticker (no orders yet). Tickers are independent (each makes its
+    # own history/chain/forecast calls), so a thread pool overlaps their network
+    # I/O — plan_ticker already isolates per-ticker errors, and valuer/sizer/
+    # forecaster_factory are stateless/read-only across calls (LiveEodPdfCache,
+    # the one piece of shared mutable state, is itself lock-protected).
+    def _plan_one(ticker: str) -> TickerPlan:
         logger.info("Planning %s", ticker)
-        plans.append(plan_ticker(
+        return plan_ticker(
             ticker, run_date=run_date, bankroll=bankroll, valuer=valuer, sizer=sizer,
             target_dte=target_dte, n_paths=n_paths, seed=seed,
             strike_window=strike_window,
             held_types=held_by_underlying.get(ticker.upper(), frozenset()),
             spot_anchor=spot_anchor, forecaster_factory=forecaster_factory,
-        ))
+        )
+
+    if not tickers:
+        plans: list[TickerPlan] = []
+    elif max_workers <= 1:
+        plans = [_plan_one(t) for t in tickers]
+    else:
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(tickers))) as pool:
+            plans = list(pool.map(_plan_one, tickers))
 
     # 2) portfolio allocation across all candidates (gross + direction + per-name caps)
     candidates = [c for p in plans for c in p.candidates]
@@ -575,6 +623,8 @@ def main() -> None:
     ap.add_argument("--event-window", type=int, default=0,
                     help="include +/-N returns around each event when conditioning (default: 0)")
     ap.add_argument("--live", action="store_true", help="actually submit orders (default: dry-run)")
+    ap.add_argument("--workers", type=int, default=DEFAULT_MAX_WORKERS,
+                    help="max concurrent tickers when planning (1 = sequential)")
     args = ap.parse_args()
 
     if args.tickers:
@@ -606,6 +656,7 @@ def main() -> None:
         forecaster_factory=factory,
         sell_threshold=args.sell_threshold,
         skip_manage=args.no_manage,
+        max_workers=args.workers,
     )
     _print_summary(result)
 

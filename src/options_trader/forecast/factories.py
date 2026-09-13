@@ -24,6 +24,7 @@ calendar can't be built, so a flaky earnings feed never aborts a ticker.
 from __future__ import annotations
 
 import logging
+import threading
 from dataclasses import dataclass
 from datetime import date, timedelta
 from typing import Callable, Optional
@@ -210,7 +211,7 @@ IndexPdfFn = Callable[[str, date, int], ImpliedPDF]
 IndexHistoryFn = Callable[[str], StockReturnTS]
 
 
-def live_index_pdf(
+def live_eod_pdf(
     symbol: str,
     run_date: date,
     horizon_days: int,
@@ -245,6 +246,45 @@ def live_index_pdf(
     smile = [c for c in contracts if c.expiry == chosen]
     t_years = max((chosen - run_date).days, 1) / 365.0
     return implied_pdf_from_chain(smile, spot, t_years, risk_free_rate)
+
+
+class LiveEodPdfCache:
+    """Caches `live_eod_pdf` results per (symbol, run_date, horizon_days).
+
+    `OptionImpliedBetaFactory` pulls the SPY/IWM PDF for EVERY ticker in a
+    watchlist run; since run_date is shared and horizon is usually identical
+    across names, most of those chain fetches are redundant. Share one instance
+    across a `run_daily` call (via `index_pdf_fn=`) to fetch each distinct
+    (symbol, run_date, horizon) combination only once.
+
+    Single-flight per key: `run_daily` plans tickers concurrently (thread pool),
+    so a naive check-then-fetch-then-store cache is defeated on a cold start —
+    every thread misses before any of them finishes the (slow, network) fetch
+    and writes back. Holding a PER-KEY lock across the whole miss (check + fetch
+    + store) means the first thread to ask for a key fetches it once; every other
+    thread asking for the SAME key blocks until that fetch lands, then reads the
+    cached result instead of re-fetching. Different keys (e.g. SPY vs IWM) still
+    fetch concurrently across threads.
+    """
+
+    def __init__(self, risk_free_rate: float = DEFAULT_RISK_FREE_RATE) -> None:
+        self.risk_free_rate = risk_free_rate
+        self._cache: dict[tuple[str, date, int], ImpliedPDF] = {}
+        self._locks_guard = threading.Lock()
+        self._key_locks: dict[tuple[str, date, int], threading.Lock] = {}
+
+    def _lock_for(self, key: tuple[str, date, int]) -> threading.Lock:
+        with self._locks_guard:
+            return self._key_locks.setdefault(key, threading.Lock())
+
+    def __call__(self, symbol: str, run_date: date, horizon_days: int) -> ImpliedPDF:
+        key = (symbol, run_date, horizon_days)
+        with self._lock_for(key):
+            if key not in self._cache:
+                self._cache[key] = live_eod_pdf(
+                    symbol, run_date, horizon_days, risk_free_rate=self.risk_free_rate
+                )
+            return self._cache[key]
 
 
 class OptionImpliedBetaFactory:
@@ -291,7 +331,7 @@ class OptionImpliedBetaFactory:
     def _pdf_fn(self) -> IndexPdfFn:
         if self.index_pdf_fn is not None:
             return self.index_pdf_fn
-        return lambda sym, rd, h: live_index_pdf(sym, rd, h, risk_free_rate=self.risk_free_rate)
+        return lambda sym, rd, h: live_eod_pdf(sym, rd, h, risk_free_rate=self.risk_free_rate)
 
     def _history_fn(self) -> IndexHistoryFn:
         if self.index_history_fn is not None:
@@ -374,17 +414,17 @@ class OptionImpliedFactory:
     """Build the Option-Implied (own-options) BENCHMARK forecaster for one ticker.
 
     Extracts the ticker's OWN risk-neutral PDF from its live option chain (via
-    `pdf_fn`, defaulting to the symbol-generic `live_index_pdf`) and re-anchors it to
-    spot. ⚠️ NEVER a production default — it reproduces the prices already for sale, so
-    valuing those same options against it is circular. It exists only to benchmark the
+    `pdf_fn`, defaulting to `live_eod_pdf`) and re-anchors it to spot. ⚠️ NEVER a
+    production default — it reproduces the prices already for sale, so valuing
+    those same options against it is circular. It exists only to benchmark the
     production forecaster's accuracy vs the market-implied PDF (see
     option_implied_forecaster.py). Degrades to plain bootstrap (with a warning) if the
     chain is unavailable, so a flaky feed never aborts a ticker.
 
     Args:
         pdf_fn: (symbol, run_date, horizon) -> ImpliedPDF. Defaults to the live chain
-            path (`live_index_pdf`, symbol-generic despite the name); inject a stub in
-            tests / a historical path in backtests.
+            path (`live_eod_pdf`); inject a stub in tests / a historical path in
+            backtests.
         risk_free_rate: passed to the default live PDF source.
     """
 
@@ -399,7 +439,7 @@ class OptionImpliedFactory:
     def _pdf_fn(self) -> IndexPdfFn:
         if self.pdf_fn is not None:
             return self.pdf_fn
-        return lambda sym, rd, h: live_index_pdf(sym, rd, h, risk_free_rate=self.risk_free_rate)
+        return lambda sym, rd, h: live_eod_pdf(sym, rd, h, risk_free_rate=self.risk_free_rate)
 
     def __call__(self, ctx: ForecastContext) -> Forecaster:
         try:

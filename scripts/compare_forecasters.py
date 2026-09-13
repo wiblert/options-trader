@@ -37,6 +37,7 @@ from typing import Optional
 import numpy as np
 
 # ── project imports ────────────────────────────────────────────────────────────
+from options_trader.config import DEFAULT_RISK_FREE_RATE
 from options_trader.data.history import get_history, HistoryError
 from options_trader.data.options_chain import get_option_chain, OptionsChainError
 from options_trader.data.spot_anchor import live_else_close_anchor
@@ -328,7 +329,7 @@ def main() -> None:
         print(f"watchlist: {len(tickers)} tickers (seed={wl_seed}, power={args.power})")
 
     event_factory = _default_forecaster_factory(event_window=args.event_window)
-    valuer = OptionValuer(risk_free_rate=0.04)
+    valuer = OptionValuer(risk_free_rate=DEFAULT_RISK_FREE_RATE)
     sizer = KellySizer(kelly_fraction=0.25, max_fraction=0.05)
 
     results = []

@@ -36,6 +36,7 @@ from scipy import stats
 
 from datetime import timedelta
 
+from options_trader.config import DEFAULT_RISK_FREE_RATE
 from options_trader.data.history import get_history
 from options_trader.data.events.calendar import EventCalendar
 from options_trader.data.events.composite import CompositeEventSource
@@ -47,7 +48,7 @@ from options_trader.backtest.log_score import (
     rolling_log_score_backtest_garch_fhs_event,
 )
 from options_trader.backtest.option_implied_beta_backtest import (
-    HistoricalIndexPdf,
+    HistoricalEodPdf,
     _spot_lookup_from_ts,
     rolling_log_score_backtest_option_implied_beta,
     rolling_log_score_backtest_option_implied_beta_event,
@@ -110,7 +111,7 @@ def main() -> None:
     print("Fetching index histories (SPY, IWM) ...", flush=True)
     spy = get_history("SPY", args.start, args.end)
     iwm = get_history("IWM", args.start, args.end)
-    index_pdf = HistoricalIndexPdf(_spot_lookup_from_ts(spy, iwm), risk_free_rate=0.04)
+    index_pdf = HistoricalEodPdf(_spot_lookup_from_ts(spy, iwm), risk_free_rate=DEFAULT_RISK_FREE_RATE)
 
     event_source = None
     if args.events:

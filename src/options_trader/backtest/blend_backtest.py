@@ -83,7 +83,7 @@ def rolling_log_score_backtest_blend_event(
 
     Returns {"eboot": BacktestResult, "oib": BacktestResult, "blend": BacktestResult},
     all aligned (same forecast dates; same skipped dates). `index_pdf_fn(symbol,
-    run_date, horizon)` returns the as-of SPY/IWM index PDF (use `HistoricalIndexPdf`).
+    run_date, horizon)` returns the as-of SPY/IWM index PDF (use `HistoricalEodPdf`).
     """
     if horizon_days < 1 or holdout_days < 1:
         raise ValueError("horizon_days and holdout_days must be >= 1")

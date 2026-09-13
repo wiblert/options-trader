@@ -1,9 +1,19 @@
 # Architecture
 
-Current-state component map of the forecaster pipeline. (History of how it got here:
+Current-state component map of the forecaster pipeline: per-module signatures and
+implementation detail, organized by directory. (History of how it got here:
 `docs/sessions.md`. Why decisions were made: `docs/decisions.md`.)
 
-Pipeline: **history → return distribution(s) → forecaster → price distribution → valuation → Kelly sizing → portfolio caps → broker**, with the forecaster layer evaluated by the **log-score backtest**. High-level/holistic view + improvement backlog: `docs/architecture-overview.md`. Operating it + change procedure: `docs/runbook.md`.
+**Split with `docs/architecture-overview.md`:** the overview owns the ONE summary
+"Layers & responsibilities" table, the two-loops diagram, and the cross-cutting
+invariants — read it first for the holistic view + improvement backlog. This doc
+does not repeat that table; it goes one level deeper per directory (data/, forecast/,
+backtest/, universe/) for the layers complex enough to need it. The simpler layers
+(valuation/, sizing/, portfolio/, execution/, run_daily.py orchestration) are covered
+by the overview's table plus the one-line-per-file "File map" below — full function
+signatures for those are short enough to read directly in the source.
+
+Pipeline: **history → return distribution(s) → forecaster → price distribution → valuation → Kelly sizing → portfolio caps → broker**, with the forecaster layer evaluated by the **log-score backtest**. Operating it + change procedure: `docs/runbook.md`.
 
 ---
 
@@ -117,7 +127,7 @@ degrades to `bootstrap_factory` if its feed fails. Factories:
 - `EventBootstrapFactory` — `EventCalendar` from a source → conditioned distributions → `forward_schedule`
   → `EventConditionedBootstrapForecaster`.
 - `GarchFhsFactory` — event-conditioned GARCH-FHS (available via `--garch-fhs-events`).
-- `OptionImpliedBetaFactory` — injectable index-PDF (`live_index_pdf`, SPY/IWM chain→BL) + index-history
+- `OptionImpliedBetaFactory` — injectable index-PDF (`live_eod_pdf`, SPY/IWM chain→BL) + index-history
   fns → betas + idiosyncratic residuals → `OptionImpliedBetaForecaster`. **Optional `event_source`**
   (S18): when set, conditions the idiosyncratic residuals on earnings (reuses `_conditioned_residuals`
   via lazy import) so the live OIB matches the backtested event-OIB.
@@ -154,16 +164,16 @@ sub-forecaster's schedule).
 - `BacktestResult` — `mean_log_score`, `log_score_stderr`, `percentiles`, `to_dataframe`.
 
 **`option_implied_beta_backtest.py`** (Session 16) — point-in-time rolling backtest of the
-Option-Implied Beta forecaster. `build_eod_index_pdf(symbol, run_date, horizon, spot, ...)` builds the
-as-of index PDF from historical EOD option bars (liquid monthly expiry, OTM put+call, volume-weighted
-quadratic smile); `HistoricalIndexPdf` caches it per (symbol, run_date). `rolling_log_score_backtest_
+Option-Implied Beta forecaster. `build_eod_pdf(symbol, run_date, horizon, spot, ...)` builds the
+as-of PDF (any symbol) from historical EOD option bars (liquid monthly expiry, OTM put+call,
+volume-weighted quadratic smile); `HistoricalEodPdf` caches it per (symbol, run_date). `rolling_log_score_backtest_
 option_implied_beta(ts, spy_ts, iwm_ts, index_pdf_fn, ...)` reuses `OptionImpliedBetaFactory` per
 holdout day with point-in-time-truncated histories; skips (and counts) dates with no index PDF rather
 than degrading to bootstrap. Driver: `scripts/run_option_implied_beta_backtest.py` (paired vs bootstrap).
 Also `rolling_log_score_backtest_option_implied_beta_event` (event-conditioned idiosyncratic).
 
 **`option_implied_backtest.py`** (Session 17) — rolling backtest of the own-options BENCHMARK.
-`HistoricalTickerPdf` (cached, reuses the symbol-generic `build_eod_index_pdf`) +
+`HistoricalTickerPdf` (cached, reuses `build_eod_pdf`) +
 `rolling_log_score_backtest_option_implied`. Drivers: `scripts/run_option_implied_backtest.py` (paired
 vs event-bootstrap), `scripts/analyze_option_implied_quantiles.py` (per-eval edge by realized-return quantile).
 

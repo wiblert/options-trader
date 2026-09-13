@@ -49,8 +49,9 @@ Locked decisions and their rationale, deduped across sessions. Newest first.
   options' PDF onto a ticker via Beta + idiosyncratic residuals, so it is NOT circular and remains a
   genuine forecaster candidate (still gated by the log-score criterion). This one uses the ticker's OWN
   options directly, which is exactly why it is only ever a benchmark.
-- **Reuse:** `build_eod_index_pdf` is symbol-generic (name notwithstanding) and `live_index_pdf` likewise,
-  so the own-options path is almost entirely existing machinery.
+- **Reuse:** `build_eod_pdf` and `live_eod_pdf` are symbol-generic by design (renamed from
+  `build_eod_index_pdf` / `live_index_pdf` in the S18 cleanup — they always worked for any symbol,
+  the old names just implied index-only), so the own-options path is almost entirely existing machinery.
 
 ## Forecaster: GARCH-FHS ACCEPTED (plain, ungated); vol-divergence gate REJECTED (Session 11)
 - **Decision:** adopt `GarchFhsForecaster` (GARCH(1,1)-filtered Filtered Historical Simulation) as a
