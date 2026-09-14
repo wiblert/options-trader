@@ -161,22 +161,29 @@ the S17/S18 builds.
   event-OIB) beats event-bootstrap **+0.0107, p≈6e-14, 27/40 names** (1yr, 40 tkr) but does NOT beat OIB
   (−0.002, n.s.) — gain ~85% inherited from OIB; blend is a robustness play (between both arms on 33/40,
   lower per-ticker variance). vs own-options: +2.16 pooled but thin-chain-inflated (liquid-only +0.73,
-  median −0.026). **Default NOT flipped** (single window; OIB regime-dependent). Next gate: held-out 2nd
-  window + the **vol/beta router** (a/below). See `docs/results.md` S18. Evidence (`docs/results.md`
-  "Where each forecaster dominates"): per-ticker
-  best over 2 windows splits **OIB 24 / event-GARCH 21 / event-bootstrap 14** of 59; the split is
-  largely by **volatility/beta** and STABLE across regimes — OIB wins high-vol/high-beta names
-  (UAL/RL/META/NVDA/semis/cyclicals), event-bootstrap wins low-vol defensives (utilities/REITs/insurers/
-  BRK-B), corr(OIB−boot edge, vol level)=+0.55. The pooled W2 "tie" was the AVERAGE of OIB's high-vol
-  wins and defensive losses cancelling — i.e. a real cross-sectional signal hidden by pooling.
-  **Approaches to backtest (gate each on log score, on a held-out window to avoid overfitting the
-  combiner):** (a) **vol/beta router** — hard-switch to OIB for high-vol/high-beta names, event-bootstrap
-  for low-vol defensives (threshold fit on training only); (b) **per-ticker historical-best selector**
-  (pick the arm with the best trailing OOS log score per name); (c) **log-score-weighted blend / stacking**
-  (softmax of recent per-arm log scores → weights); (d) **path-level mixture** (draw a fraction of MC
-  paths from each forecaster's terminal distribution — cleanest probabilistically, preserves each shape).
-  Start simple (a or d). Watch: the router must be point-in-time (no look-ahead in the switch signal);
-  judge on pooled log score AND per-regime robustness (both windows), not one favorable window.
+  median −0.026). See `docs/results.md` S18.
+  **[x] Held-out 2nd window — DONE, S21.** Same 40 tickers/params, window shifted forward exactly one
+  year (no shared eval dates with W1). Blend vs event-bootstrap **REPLICATES**: +0.0080, p=0.00084,
+  win 57%, 24/40 (vs W1's +0.0107, p≈6e-14, 27/40) — smaller but still clearly significant. The
+  mechanism flipped, though: OIB's OWN edge evaporated in W2 (−0.0073, p=0.21, n.s., 20/40 — the
+  regime-dependence predicted since S16), yet the blend still beat event-bootstrap AND this time also
+  significantly beat OIB (+0.0153, p=0.00074 — didn't happen in W1). Read: W1 the blend rode OIB's
+  strength; W2 it delivered a smaller real edge from pure diversification. **Gate cleared — default
+  stays the blend.** See `docs/results.md` S21 for full numbers/interpretation.
+  **⚠️ Complication for the vol/beta router (b, below):** the "OIB wins high-vol/high-beta names,
+  STABLE across regimes" pattern claimed from the S16 2-window study does NOT hold cleanly in S21's
+  window: AMD was one of OIB's best names in W1 (+0.050) but its single worst by far in W2 (−0.268);
+  AMAT/SNDK also flipped from wins to the largest losses. A router trained on W1's vol/beta split
+  would have actively hurt on exactly these names in W2. Fit-and-validate any threshold per window
+  before trusting it, or treat the router as lower-priority than this note previously implied.
+  **Remaining approaches to backtest (gate each on log score, on a held-out window to avoid overfitting
+  the combiner):** (a) **vol/beta router** — hard-switch to OIB for high-vol/high-beta names,
+  event-bootstrap for low-vol defensives (threshold fit on training only; now known to need real
+  cross-window validation, not just the S16 split); (b) **per-ticker historical-best selector** (pick
+  the arm with the best trailing OOS log score per name); (c) **log-score-weighted blend / stacking**
+  (softmax of recent per-arm log scores → weights). Watch: the router must be point-in-time (no
+  look-ahead in the switch signal); judge on pooled log score AND per-regime robustness across ≥2
+  windows, not one favorable window (S21 is now available as a second real window to test against).
 - [ ] **Fat-tail forecaster** (Student-t jitter or `JumpDiffusionForecaster`) — addresses the
   Session-1 PIT U-shape; the remaining gap (block AND Gaussian both ≈ bootstrap). Highest-value
   forecaster experiment. Slots into `FORECASTER_CLASSES` + standardized test.

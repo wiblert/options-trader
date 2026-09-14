@@ -78,6 +78,58 @@ Shipped as the more robust *expression* of the OIB signal, not on strong evidenc
 window and/or vol/beta router (to-do) remain the proper gate. (50/50 over learned weights to avoid
 overfitting the combiner — `docs/decisions.md`.)
 
+## 50/50 blend — held-out 2nd window (Session 21) — GATE CLEARED
+Same script/params as S18 (`scripts/run_blend_backtest.py --mode vs-eventboot`), same 40-ticker set
+(`--sample 40 --sample-seed 11 --power 0.5`), same `h=21 holdout=252`, but the whole 3-year fetch
+window shifted forward exactly one calendar year (`--start 2023-06-01 --end 2026-06-01` vs S18's
+2022-06→2025-06). Confirmed **no shared evaluation instances** with window 1: W1 forecast/realized
+dates run 2024-05-28→2025-04-30 / 2024-06-27→2025-05-30; W2 runs 2025-05-28→2026-04-29 /
+2025-06-27→2026-05-29 — disjoint on both axes with a ~1-month gap. (`--end` chosen with a ~3.5-month
+buffer before the run date: the OIB index-PDF builder discovers its smile via `status="inactive"`
+—i.e. already-EXPIRED— contracts, so an eval window pushed too close to "now" starves on skips for
+reasons unrelated to liquidity; a first attempt at `--end 2026-09-01` hit 40% skips for exactly this
+reason before the window was pulled back.)
+
+**Window 2 vs event-bootstrap (40 names, n=6360, same seed/tickers as S18):**
+| arm | mean log score | vs event_bootstrap |
+|---|---|---|
+| event_bootstrap (production) | −4.1157 | — |
+| **blend 50/50** | **−4.1076** | **+0.0080, t=3.34, p=0.00084, per-eval win 57%, 24/40 tkrs** ✅ |
+| oib (event) | −4.1230 | −0.0073, t=−1.25, p=0.21, **NOT significant**, 20/40 tkrs |
+
+| | Window 1 (S18) | Window 2 (S21, held-out) |
+|---|---|---|
+| eval period | ≈2024-05→2025-05 | ≈2025-06→2026-05 |
+| blend vs eboot | +0.0107, p≈6e-14, 27/40 | **+0.0080, p=0.00084, 24/40** |
+| oib vs eboot | +0.0126, p≈2e-6, 26/40 | **−0.0073, p=0.21 (n.s.), 20/40** |
+| blend vs oib | −0.0019, p=0.23 (n.s.) | **+0.0153, p=0.00074** ✅ |
+
+**The blend's edge over event-bootstrap REPLICATES out-of-sample** — smaller (+0.0080 vs +0.0107) but
+still clearly significant (p<0.001), and the per-eval win rate is actually higher (57% vs 51%).
+
+**The mechanism flipped, and that is the more informative finding.** In W1 the blend's gain was ~85%
+inherited from OIB (OIB alone had the edge; blend didn't beat OIB, p=0.23) — exactly the "regime-
+dependent OIB" pattern flagged since S16. In W2, OIB's OWN edge **evaporated** (a coin-flip 20/40
+tickers, point estimate slightly negative, p=0.21) — the regime dependence predicted since S16 shows
+up directly. Despite that, the blend still beat event-bootstrap, AND this time it also **significantly
+beat OIB itself** (+0.0153, p=0.00074 — didn't happen in W1). So W1's blend rode OIB's strength; W2's
+blend delivered a smaller but real edge purely from diversification (averaging a flat/weak arm with a
+solid one still beats the solid one alone, and clearly beats the weak one). This is the first
+out-of-sample evidence actually *supporting* the "robustness across regimes, not a one-off edge" thesis
+the blend shipped on in S18, rather than merely hoping for it.
+
+**Decision: held-out-window gate CLEARED.** The blend default (`BlendFactory` 50/50) is retained; no
+code change required — this was a validation run, not a forecaster change. Artifacts:
+`output/blend_window2_compare.png`, `output/blend_window2_blend_vs_eventboot.md`,
+`output/blend_window2_eventboot.csv`.
+
+**⚠️ Note against the vol/beta router idea:** per-ticker OIB-vs-eboot is NOT cross-sectionally stable
+between windows — e.g. AMD was one of OIB's best names in W1 (+0.050) but its worst by far in W2
+(−0.268); AMAT/SNDK also flipped from wins to the largest losses. A router trained on "high-vol/beta
+wins with OIB" from W1 would have actively hurt on AMD/AMAT/SNDK in W2. This doesn't kill the router
+idea but raises the bar: any vol/beta threshold needs to be refit/validated per window, not assumed
+stable — worth checking before investing more in that to-do.
+
 ## Option-Implied (own-options) BENCHMARK vs production (Session 17) — accuracy vs the market price
 A diagnostic, not a forecaster gate. `OptionImpliedForecaster` reconstructs a ticker's OWN
 risk-neutral PDF (the prices for sale) and is scored head-to-head against the production default

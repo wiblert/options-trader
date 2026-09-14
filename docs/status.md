@@ -1,10 +1,10 @@
 # Status
 
-_As of 2026-09-13 (end of Session 20). Update this at every session end._
+_As of 2026-09-14 (end of Session 21). Update this at every session end._
 
 ## Build
 - Clean. **469 tests passing** (`python -m pytest -q`). Tests are synthetic / no-network; also
-  end-to-end live-verified against real Alpaca/yfinance data (Sessions 19–20).
+  end-to-end live-verified against real Alpaca/yfinance data (Sessions 19–21).
 - Install: `pip install -e .`; venv at `./venv`. No new deps pending.
 - Git remote: `https://github.com/wiblert/options-trader` (public), pushed Session 19.
 
@@ -35,26 +35,33 @@ _As of 2026-09-13 (end of Session 20). Update this at every session end._
   **switched S18 (per user direction)** from `EventBootstrapFactory`. Path-level probability mixture: half
   the terminal-price mass from the event-conditioned bootstrap (historical), half from event-OIB (forward
   option-implied SPY/IWM PDF · Beta + earnings-conditioned idiosyncratic). S18 backtest: blend beats
-  event-bootstrap +0.0107 (p≈6e-14, 27/40, 1yr) — small, OIB-inherited, single-window; shipped as the
-  more robust expression of the signal, not on strong evidence. Live dry-run verified (`run_daily
-  --tickers AAPL`). Each arm degrades to plain bootstrap on feed failure; `--no-events` → plain bootstrap,
-  `--garch-fhs` → GARCH-FHS. Regression test: `test_default_forecaster_factory_is_blend`. **Open gate:**
-  single-window edge — held-out 2nd window + vol/beta router (to-do) still pending. Prior default
+  event-bootstrap +0.0107 (p≈6e-14, 27/40, 1yr). **Held-out 2nd window (S21): REPLICATES** — +0.0080,
+  p=0.00084, 24/40, on a genuinely non-overlapping window one year later. Mechanism flipped (OIB's own
+  edge vanished in W2, but the blend still beat event-bootstrap AND — unlike W1 — significantly beat OIB
+  too), which is itself evidence for the "robust across regimes" thesis rather than a one-off edge.
+  Live dry-run verified (`run_daily --tickers AAPL`). Each arm degrades to plain bootstrap on feed
+  failure; `--no-events` → plain bootstrap, `--garch-fhs` → GARCH-FHS. Regression test:
+  `test_default_forecaster_factory_is_blend`. **Held-out-window gate CLEARED (S21).** Remaining open
+  item: the vol/beta router — S21 also found the router's premise (a stable high-vol/beta ticker split)
+  doesn't hold cleanly across windows (AMD flipped from OIB's best name to its worst), so it needs
+  real cross-window validation, not just the earlier single-window split. Prior default
   `EventBootstrapFactory` (S16, +0.153 vs plain bootstrap) remains a sub-factory of the blend.
 - **Event sources (live):** yfinance earnings + **`FomcCalendarSource`** (auto-fetched Fed meetings)
   + manual macro CSV. FOMC is no longer hand-maintained.
 
 ## Recommended next step
 _Production default is now the **50/50 blend** (event-bootstrap ⊕ event-OIB), switched S18 per user
-direction. The Architecture / tech-debt cleanup section in `docs/todo.md` is now fully resolved
-(Session 19), and the Universe section's dual-class dedup + Alpaca symbol-format items are resolved
-(Session 20). The highest-priority follow-ups, in order:_
+direction and **validated on a held-out 2nd window in Session 21** (see Results below — gate cleared).
+The Architecture / tech-debt cleanup section in `docs/todo.md` is now fully resolved (Session 19), and
+the Universe section's dual-class dedup + Alpaca symbol-format items are resolved (Session 20). The
+highest-priority follow-ups, in order:_
 
-**A. Validate the blend default properly** (it shipped on a single-window edge). Gate it on a
-**held-out 2nd window** + build the **vol/beta router** (`docs/todo.md` ensemble item) — item 1 showed
-the OIB-vs-bootstrap edge is cleanly cross-sectional (high-vol/beta vs defensive), so a router may beat
-the flat 50/50 blend. Also open: **edge-aware watchlist sampling** (success-weighted / low-volume tilt,
-new Universe to-do).
+**A. Build the vol/beta router** (`docs/todo.md` ensemble item) — the held-out window is now cleared,
+but S21 also found the router's premise (a stable high-vol/beta ticker split from S16) does NOT hold
+cleanly across windows (AMD flipped from OIB's best name in W1 to its worst in W2). Any router needs
+to be fit/validated against both windows, not just W1's split — treat this as harder and lower-certainty
+than previously assumed. Also open: **edge-aware watchlist sampling** (success-weighted / low-volume
+tilt, new Universe to-do).
 
 **B. ⚠️ get the review web app to render in the browser** (Session 14 unfinished). The app
 (`/review`) is code-complete and the server + API are proven working via curl, but it shows a blank
@@ -91,6 +98,30 @@ forecaster** (Student-t / jump diffusion) remains the highest-value open forecas
 Full backlog: `docs/todo.md`.
 
 ## Last worked on
+**Session 21 (2026-09-14) — held-out 2nd-window validation of the blend default.**
+Ran `scripts/run_blend_backtest.py --mode vs-eventboot` with the exact same 40-ticker set/params as
+S18 (`--sample 40 --sample-seed 11 --power 0.5 --horizon 21 --holdout 252 --n-paths 6000`) but the
+whole 3-year fetch window shifted forward exactly one calendar year (`2023-06-01..2026-06-01` vs
+S18's `2022-06-01..2025-06-01`). Confirmed zero shared evaluation instances between the two windows
+before trusting the result (W1 forecast/realized 2024-05-28→2025-04-30 / 2024-06-27→2025-05-30; W2
+2025-05-28→2026-04-29 / 2025-06-27→2026-05-29). One false start: an initial `--end` too close to the
+run date hit 40% skips because the OIB index-PDF builder only discovers already-EXPIRED
+(`status="inactive"`) contracts — pulled `--end` back to a ~3.5-month buffer and skips normalized to
+the usual ~31% (illiquidity-driven, not recency). **Result: the blend's edge over event-bootstrap
+REPLICATES** — +0.0080, p=0.00084, 57% per-eval win, 24/40 tickers (vs W1's +0.0107, p≈6e-14, 27/40).
+More interesting: the MECHANISM flipped — OIB's own edge over event-bootstrap, strong in W1
+(+0.0126, p≈2e-6), evaporated in W2 (−0.0073, p=0.21, n.s.) — the regime-dependence flagged since S16
+showing up directly — yet the blend still beat event-bootstrap and, unlike W1, also significantly
+beat OIB itself (+0.0153, p=0.00074). Read: W1 the blend rode OIB's strength, W2 it delivered a
+smaller real edge purely from diversification — the first out-of-sample evidence actually supporting
+the "robust across regimes" thesis the blend shipped on. **Held-out-window gate CLEARED; default
+unchanged** (validation run, not a forecaster change). Also surfaced a complication for the vol/beta
+router to-do: OIB's per-ticker win/loss pattern is NOT stable across windows (AMD: best OIB name in
+W1 at +0.050, worst by far in W2 at −0.268; AMAT/SNDK similarly flipped) — a router fit on W1's split
+alone would have hurt on exactly those names in W2. Full write-up + numbers: `docs/results.md`
+"held-out 2nd window (Session 21)". Artifacts: `output/blend_window2_{compare.png,
+blend_vs_eventboot.md, eventboot.csv}`.
+
 **Session 20 (2026-09-13) — dual-class dedup + Alpaca symbol-format mapping (Universe to-dos).**
 Researched, then implemented, both open Universe items. Confirmed via code + the real snapshot data
 that the todo bundled two UNRELATED problems: (A) GOOGL/GOOG, FOX/FOXA, NWS/NWSA are separate snapshot
